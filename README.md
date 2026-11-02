@@ -66,8 +66,8 @@ Themes are topic clusters, worked out in three steps:
    `google/embeddinggemma-300m` on DeepInfra's OpenAI-compatible embeddings
    endpoint (multilingual, Swedish and English). Vectors are cut to 256
    dimensions and cached in `api.state` by a hash of the text. A pair above
-   cosine 0.84 gets a weak edge (EmbeddingGemma's cosines run high: on 48 real
-   items the median pair was 0.75, the top 1 % above 0.90).
+   cosine 0.84 gets a weak edge (EmbeddingGemma's cosines run high: on 87 real
+   texts the median pair was 0.75, the top 1 % above 0.90).
 3. **Clustering** (`cluster.ts`). Louvain community detection on the weighted
    graph, written here and deterministic, gives 6 to 9 topics. Each item starts
    in its last topic and is a little sticky there, so one new item does not
@@ -80,8 +80,8 @@ call per new or changed topic, with its members' titles, brief lines, subjects
 and the start of the last message, and answers the theme's name, a line under
 it, two summary lines per member and labels for the pairs only embeddings tie.
 The answer is checked with zod and kept in `api.state`; a topic keeps its name
-while its members barely change. Measured on 28 real sessions and 50 chats and
-mails, a first refresh (87 texts embedded, 6 topics named in parallel) took
+while its members barely change. Measured on 28 real sessions and 60 listed chats and
+mails, a first refresh (87 distinct texts embedded, 48 items drawn, 6 topics named in parallel) took
 about 6 s and cost about $0.0006; later refreshes send only what changed.
 
 It needs a DeepInfra key in prifly's vault: an `api-token` entry named

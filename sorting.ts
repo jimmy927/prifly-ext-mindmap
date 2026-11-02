@@ -5,21 +5,11 @@
  */
 
 import { z } from "zod";
-import { commonEntity, type Entity, fold } from "./entities";
+import { commonEntity, type Entity, fold, SERVICES } from "./entities";
 import type { Item, Theme } from "./types";
 
 /** A summary line's length, in characters: about what fits under a circle's title. */
 export const LINE_CHARS = 22;
-const SERVICES = new Set([
-  "whatsapp",
-  "gmail",
-  "outlook",
-  "telegram",
-  "instagram",
-  "linkedin",
-  "messenger",
-  "trello",
-]);
 
 /** `text` cut at a word to about `chars`, with no trailing punctuation. */
 export function shorten(text: string, chars = LINE_CHARS): string {
@@ -168,7 +158,7 @@ export function parseNaming(text: string, members: readonly Item[]): Naming | nu
   const parsed = NameSchema.safeParse(withName(jsonIn(text)));
   if (!parsed.success) return null;
   const answer = parsed.data;
-  if (SERVICES.has(fold(answer.name))) return null;
+  if (SERVICES.includes(fold(answer.name))) return null;
   const byShort = new Map(members.map((m, i) => [`i${i + 1}`, m.id]));
   const lines = new Map<string, string[]>();
   for (const entry of answer.items) {

@@ -155,6 +155,11 @@ export class MindMap {
       .then(() => {
         const fresh = this.work(now);
         return this.namer.update(fresh.topics, fresh.entities, now);
+      })
+      .catch((error: unknown) => {
+        this.api.log("refresh_failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
     return this.render(worked.items, this.sortingOf(worked));
   }

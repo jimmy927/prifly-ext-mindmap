@@ -210,15 +210,21 @@ describe("embeddings", () => {
       i.id === "c:whatsapp_chats:ada" ? { ...i, head: "Thanks!" } : i,
     );
     await e.update(changed, EMBED_GAP_MS * 3 + 1);
-    await e.update(changed, EMBED_GAP_MS * 3 + 2);
     expect(sent).toHaveLength(2);
     expect(sent[1]).toHaveLength(1);
-    await e.update(changed, EMBED_GAP_MS * 4);
+    // Another change within the minute waits for the minute to pass.
+    const again = changed.map((i) =>
+      i.id === "c:whatsapp_chats:bob" ? { ...i, head: "Numbers sent" } : i,
+    );
+    await e.update(again, EMBED_GAP_MS * 3 + 2);
     expect(sent).toHaveLength(2);
+    await e.update(again, EMBED_GAP_MS * 4 + 1);
+    expect(sent).toHaveLength(3);
+    expect(sent[2]).toHaveLength(1);
     // A restart reads the cached vectors and sends nothing.
-    const again = new Embedder({ key: async () => "k", embed: async () => [], state });
-    await again.load();
-    expect(again.due(changed, EMBED_GAP_MS * 10)).toBe(false);
+    const restarted = new Embedder({ key: async () => "k", embed: async () => [], state });
+    await restarted.load();
+    expect(restarted.due(again, EMBED_GAP_MS * 10)).toBe(false);
   });
 });
 

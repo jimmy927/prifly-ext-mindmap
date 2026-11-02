@@ -15,7 +15,7 @@ export const MAX_TOPICS = 9;
 /**
  * Cosine similarity above this is a weak edge, and above `VERY_SIMILAR` a
  * related link worth drawing. Set for EmbeddingGemma, whose cosines run high:
- * on 48 real items the median pair was 0.75, the top 10 % above 0.84 and the
+ * on 87 real texts (28 sessions, 59 chats and mails) the median pair was 0.75, the top 10 % above 0.84 and the
  * top 1 % above 0.90.
  */
 export const SIMILAR = 0.84;
@@ -144,11 +144,20 @@ function aggregate(adj: Adjacency, comm: readonly number[], count: number): Adja
   return out;
 }
 
-/** Louvain from the partition `init`: each node's community, renumbered from 0 in node order. */
-export function louvain(adj: Adjacency, init: readonly number[], resolution = 1): number[] {
+/**
+ * Louvain from the partition `init`: each node's community, renumbered from 0
+ * in node order. A node is sticky to its `init` community unless `sticky`
+ * says false for it (a new item, alone in a community of its own).
+ */
+export function louvain(
+  adj: Adjacency,
+  init: readonly number[],
+  resolution = 1,
+  sticky: readonly boolean[] = [],
+): number[] {
   let graph = adj;
   let comm = renumber(init);
-  const seed = [...comm];
+  const seed = comm.map((c, i) => (sticky[i] === false ? -1 : c));
   let membership = adj.map((_, i) => i);
   for (let level = 0; level < 20; level++) {
     const moved = localMove(graph, comm, resolution, level === 0 ? seed : null);
@@ -215,7 +224,8 @@ function partition(
     if (!labels.has(topic)) labels.set(topic, labels.size);
     return labels.get(topic) ?? i;
   });
-  const comm = louvain(subAdj, init, resolution);
+  const sticky = linked.map((id) => previous.has(id));
+  const comm = louvain(subAdj, init, resolution, sticky);
   const groups: Groups = [];
   linked.forEach((id, i) => {
     const c = comm[i] ?? 0;

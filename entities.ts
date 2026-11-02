@@ -26,8 +26,8 @@ const WEIGHT: Record<EntityKind, number> = {
 };
 const RANK: EntityKind[] = ["person", "ticket", "card", "domain", "repo", "term"];
 
-/** Services, and words every chat or mail has: never an entity. */
-const SERVICES = [
+/** The services' names, folded: never an entity, never a theme's name. */
+export const SERVICES: readonly string[] = [
   "whatsapp",
   "gmail",
   "outlook",
@@ -37,6 +37,7 @@ const SERVICES = [
   "messenger",
   "trello",
 ];
+/** Services, and words every chat or mail has: never an entity. */
 const STOP = new Set([
   ...SERVICES,
   ..."about after again also before being could does done from have here into just like make more most much need only other over please should some such than thanks that their them then there these they this those through very want what when where which while will with would your yours".split(
@@ -136,9 +137,10 @@ function personOf(item: Item): Known | null {
 function repoOf(item: Item): Known | null {
   const repo = fold(item.repo.trim());
   if (repo === "" || STOP.has(repo)) return null;
+  // Words split on hyphens, so "prifly-ext-mindmap" is matched as its three words.
   const parts = tokens(item.repo.replace(/[-_.]/g, " ")).map((t) => t.norm);
-  const aliases: Alias[] = [{ words: [repo], capital: false }];
-  if (parts.length > 1) aliases.push({ words: parts, capital: false });
+  if (parts.length === 0) return null;
+  const aliases: Alias[] = [{ words: parts, capital: false }];
   return { entity: { key: `r:${repo}`, kind: "repo", label: item.repo }, aliases };
 }
 
@@ -159,9 +161,11 @@ function cardOf(item: Item): Known | null {
 function domainEntity(address: string): Known | null {
   const main = domainOf(address);
   if (main === null) return null;
+  // "lovelace-labs" is matched as its two words, the way text is split.
+  const words = main.split(/[-_]+/).filter((word) => word !== "");
   return {
     entity: { key: `d:${main}`, kind: "domain", label: capitalise(main) },
-    aliases: [{ words: [main], capital: false }],
+    aliases: [{ words, capital: false }],
   };
 }
 
@@ -223,13 +227,15 @@ function loose(item: Item, seen: Seen): Entity[] {
 /**
  * Each item's entities: its own, the known ones (people, domains, repositories,
  * cards) its text names, its ticket ids and its words. An entity carried by one
- * item only, or (bar a repository) by more than an eighth of them (4 to 6
- * items), is dropped: it ties nothing, or everything.
+ * item only, or by more than an eighth of them (4 to 6 items), is dropped: it
+ * ties nothing, or everything. A repository's own sessions are not counted
+ * towards that cap; the chats, mails and cards that name it are.
  */
 export function entitiesOf(items: readonly Item[]): Map<string, Entity[]> {
   const dictionary = dictionaryOf(items);
   const found = new Map(items.map((item) => [item.id, foundIn(item, dictionary)]));
-  return dropRareAndCommon(found, items.length);
+  const sessions = new Set(items.filter((item) => item.kind === "session").map((item) => item.id));
+  return dropRareAndCommon(found, items.length, sessions);
 }
 
 /** The known entities: what each item is itself, by key. */
@@ -259,17 +265,26 @@ function foundIn(item: Item, dictionary: ReadonlyMap<string, Known>): Map<string
 function dropRareAndCommon(
   found: Map<string, Map<string, Entity>>,
   count: number,
+  sessions: ReadonlySet<string>,
 ): Map<string, Entity[]> {
   const df = new Map<string, number>();
-  for (const mine of found.values())
-    for (const key of mine.keys()) df.set(key, (df.get(key) ?? 0) + 1);
+  // A repository's holders that are not its sessions: a repo named "api" in every mail ties nothing.
+  const others = new Map<string, number>();
+  for (const [id, mine] of found) {
+    for (const [key, entity] of mine) {
+      df.set(key, (df.get(key) ?? 0) + 1);
+      if (entity.kind === "repo" && !sessions.has(id)) others.set(key, (others.get(key) ?? 0) + 1);
+    }
+  }
   // The reader's own name, their surname, a word every mail has: on too many items to tell anything apart.
   const cap = Math.min(6, Math.max(4, Math.ceil(count / 8)));
   const out = new Map<string, Entity[]>();
   for (const [id, mine] of found) {
     const kept = [...mine.values()].filter((entity) => {
       const n = df.get(entity.key) ?? 0;
-      return n >= 2 && (entity.kind === "repo" || n <= cap);
+      if (n < 2) return false;
+      if (entity.kind !== "repo") return n <= cap;
+      return sessions.has(id) || (others.get(entity.key) ?? 0) <= cap;
     });
     out.set(id, kept);
   }

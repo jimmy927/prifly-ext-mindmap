@@ -116,6 +116,66 @@ describe("the namer", () => {
     expect(n.themeOf(topic(), entities).name).toBe("Ada");
   });
 
+  test("a key added later is used for the same topic after a minute", async () => {
+    let key: string | null = null;
+    const calls: number[] = [];
+    const n = new Namer({
+      key: async () => key,
+      chat: async () => {
+        calls.push(1);
+        return goodAnswer();
+      },
+    });
+    const entities = entitiesOf(members());
+    await n.update([topic()], entities, 0);
+    key = "k";
+    await n.update([topic()], entities, MIN_GAP_MS - 1);
+    expect(calls).toHaveLength(0);
+    await n.update([topic()], entities, MIN_GAP_MS);
+    expect(calls).toHaveLength(1);
+    expect(n.themeOf(topic(), entities).name).toBe("Ada's refund");
+  });
+
+  test("a failed call is tried again after a minute, then not again", async () => {
+    let fail = true;
+    const calls: number[] = [];
+    const n = new Namer({
+      key: async () => "k",
+      chat: async () => {
+        calls.push(1);
+        if (fail) throw new Error("timed out");
+        return goodAnswer();
+      },
+    });
+    const entities = entitiesOf(members());
+    await n.update([topic()], entities, 0);
+    expect(n.state()).toBe("failed");
+    fail = false;
+    await n.update([topic()], entities, MIN_GAP_MS - 1);
+    expect(calls).toHaveLength(1);
+    await n.update([topic()], entities, MIN_GAP_MS);
+    expect(calls).toHaveLength(2);
+    expect(n.state()).toBe("model");
+    await n.update([topic()], entities, MIN_GAP_MS * 3);
+    expect(calls).toHaveLength(2);
+  });
+
+  test("one failed topic of two keeps the footer on the model; the other is named", async () => {
+    const other = [item({ id: "bbbbbbbb-2222-4000-8000-000000000000", title: "Tax report" })];
+    const n = new Namer({
+      key: async () => "k",
+      chat: async (_key, _model, messages) => {
+        if ((messages[1]?.content ?? "").includes("Tax report")) throw new Error("HTTP 500");
+        return goodAnswer();
+      },
+    });
+    const all = [...members(), ...other];
+    const second: TopicInfo = { id: "t2", members: other, pairs: [] };
+    await n.update([topic(), second], entitiesOf(all), 0);
+    expect(n.state()).toBe("model");
+    expect(n.themeOf(topic(), entitiesOf(all)).name).toBe("Ada's refund");
+  });
+
   test("a restart reads the kept names and does not ask again", async () => {
     const first = namer(() => goodAnswer());
     const entities = entitiesOf(members());

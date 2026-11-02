@@ -147,7 +147,8 @@ export class Namer {
       const started = Date.now();
       const results = await Promise.all(due.map((t) => this.name(key, t, entities)));
       const failed = results.filter((ok) => !ok).length;
-      this.status = failed > 0 ? "failed" : "model";
+      // One failed topic keeps its entity name and is asked again; the footer says "failed" only when none was named.
+      this.status = failed === due.length ? "failed" : "model";
       this.deps.log?.("named", { topics: due.length, failed, ms: Date.now() - started });
       this.prune(topics);
       await this.deps.state?.set(STATE_NAME, this.saved).catch(() => undefined);
@@ -173,7 +174,8 @@ export class Namer {
       );
       const naming = parseNaming(text, topic.members);
       if (naming === null)
-        throw new Error(`the answer was not a valid naming: ${text.slice(0, 160)}`);
+        // Its length only: the answer summarises private chats and mails.
+        throw new Error(`the answer (${text.length} characters) was not a valid naming`);
       this.saved.topics[topic.id] = {
         members: topic.members.map((m) => m.id),
         name: kept?.name ?? naming.name,
