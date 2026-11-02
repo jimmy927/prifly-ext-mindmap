@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Mind map</title>
+    <link rel="stylesheet" href="style.css" />
+    <script>
+      // Before the first paint: the window says light or dark in the query.
+      if (new URLSearchParams(location.search).get("theme") === "dark") {
+        document.documentElement.classList.add("dark");
+      }
+    </script>
+  </head>
+  <body>
+    <div class="app">
+      <div class="stage" id="stage">
+        <svg id="map" viewBox="0 0 1680 1060" role="img" aria-label="Mind map of your sessions"></svg>
+        <p class="message" id="message">Reading your sessions…</p>
+      </div>
+      <div class="legend" id="legend"></div>
+      <div class="footer" id="footer" aria-live="polite"></div>
+    </div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

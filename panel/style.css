@@ -1,0 +1,120 @@
+/* The window's own tokens arrive in a `prifly-look` message (app.js) and
+   override these; these are what the page wears until then. */
+:root {
+  color-scheme: light;
+  --bg: #ffffff;
+  --fg: #16181d;
+  --muted-fg: #6b7280;
+  --border: #e3e5e9;
+  --font: "Segoe UI", system-ui, sans-serif;
+  --link: #4b5563;
+  --good: #1baf7a;
+  --warning: #eda100;
+  --critical: #e0443a;
+  --neutral: #9ca3af;
+}
+:root.dark {
+  color-scheme: dark;
+  --bg: #111317;
+  --fg: #eceef2;
+  --muted-fg: #9097a2;
+  --border: #2a2f37;
+  --link: #a3aab5;
+  --good: #199e70;
+  --warning: #c98500;
+  --critical: #e5584f;
+  --neutral: #5d636d;
+}
+* {
+  box-sizing: border-box;
+}
+html,
+body {
+  height: 100%;
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 13px / 1.4 var(--font);
+}
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+#map {
+  display: block;
+  width: 100%;
+  height: 100%;
+  font-family: var(--font);
+}
+.message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  color: var(--muted-fg);
+  font-size: 14px;
+}
+.message[hidden] {
+  display: none;
+}
+.message.error {
+  color: var(--critical);
+}
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  padding: 8px 16px;
+  border-top: 1px solid var(--border);
+  color: var(--muted-fg);
+  font-size: 12px;
+}
+.legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.legend svg {
+  flex: none;
+}
+.footer {
+  padding: 0 16px 8px;
+  color: var(--muted-fg);
+  font-size: 11.5px;
+}
+.node {
+  cursor: default;
+}
+.node.click {
+  cursor: pointer;
+}
+.node.click:hover > circle.body {
+  stroke-width: 3.5;
+}
+.title {
+  font-weight: 600;
+  fill: var(--fg);
+}
+.line {
+  fill: var(--muted-fg);
+}
+.label {
+  font-style: italic;
+  font-size: 10.5px;
+  fill: var(--fg);
+  paint-order: stroke;
+  stroke: var(--bg);
+  stroke-width: 3.5px;
+  stroke-linejoin: round;
+}
