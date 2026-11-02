@@ -14,7 +14,8 @@ import type { Item, Sorting } from "./types";
 export const MODEL = "Qwen/Qwen2.5-7B-Instruct";
 export const ENDPOINT = "https://api.deepinfra.com/v1/openai/chat/completions";
 export const MIN_GAP_MS = 60_000;
-const TIMEOUT_MS = 60_000;
+/** A sorting of ~35 items took 33-52 s when measured; a call past this is given up. */
+const TIMEOUT_MS = 90_000;
 
 export type Message = { role: string; content: string };
 /** One chat completion's text. Throws on a failed call. */
