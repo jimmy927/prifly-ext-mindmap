@@ -37,7 +37,6 @@ test("a related link the model sees is dropped where a solid one joins the pair"
     themes: [],
     themeOf: {},
     lines: {},
-    by: "m",
     related: [
       { a: child.id, b: parent.id, label: "same" },
       { a: child.id, b: "gone", label: "x" },

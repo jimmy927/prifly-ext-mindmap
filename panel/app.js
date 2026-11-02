@@ -112,14 +112,34 @@ function drawLegend(view) {
   ].join("");
 }
 
-function drawFooter(view) {
-  const f = view.footer;
+/** "14:32": the time of day in the reader's own clock. */
+function clock(ms) {
+  return new Date(ms).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+}
+
+/** The footer under a map; an old map also says why, and when it was last updated. */
+function drawFooter(answer) {
+  const f = answer.map.footer;
   const parts = [
     `${f.sessions} sessions, ${f.conversations} conversations, ${f.cards} cards`,
     f.model,
   ];
   if (f.skipped.length > 0) parts.push(`Not read: ${f.skipped.join(", ")}`);
-  $("footer").textContent = parts.join(" · ");
+  const footer = $("footer");
+  footer.replaceChildren();
+  if (!answer.current) {
+    const note = document.createElement("span");
+    note.className = answer.error ? "alert" : "";
+    note.textContent = [answer.error?.text, `Last updated ${clock(answer.updatedAt)}`]
+      .filter(Boolean)
+      .join(" · ");
+    footer.append(note);
+  }
+  footer.append(parts.join(" · "));
 }
 
 function say(text, error = false) {
@@ -129,19 +149,59 @@ function say(text, error = false) {
   message.classList.toggle("error", error);
 }
 
+/** The page that stands in for the map while there has been no good one. */
+function showProblem(error) {
+  const chip =
+    error.kind === "http"
+      ? `HTTP ${error.status}`
+      : error.kind === "no-key"
+        ? "No key"
+        : "No answer";
+  $("problem-chip").textContent = `${chip} · ${error.call}`;
+  $("problem-title").textContent = error.title;
+  $("problem-text").textContent = error.text;
+  $("problem").hidden = false;
+  document.querySelector(".app").classList.add("failed");
+  $("footer").textContent = "";
+}
+
+function showMap() {
+  $("problem").hidden = true;
+  document.querySelector(".app").classList.remove("failed");
+}
+
+function show(answer) {
+  if (answer.state === "error") {
+    showProblem(answer.error);
+    return;
+  }
+  showMap();
+  if (answer.state === "waiting") {
+    if (target === null) say("Reading your sessions…");
+    return;
+  }
+  say(answer.map.nodes.length === 0 ? "No sessions to map yet." : "");
+  drawLegend(answer.map);
+  drawFooter(answer);
+  animate(answer.map);
+}
+
 async function refresh() {
   try {
     const response = await fetch("api/map", { cache: "no-store" });
     const body = await response.json();
     if (!response.ok) throw new Error(body?.error ?? `HTTP ${response.status}`);
-    say(body.nodes.length === 0 ? "No sessions to map yet." : "");
-    drawLegend(body);
-    drawFooter(body);
-    animate(body);
+    show(body);
   } catch (error) {
     // Keep the last map on screen; say what went wrong over it only when there is none.
-    if (target === null) say(`Could not read the map: ${error.message}`, true);
-    else $("footer").textContent = `Could not update the map: ${error.message}`;
+    if (target === null) {
+      showProblem({
+        kind: "other",
+        call: "map",
+        title: "Could not read the map",
+        text: error.message,
+      });
+    } else $("footer").textContent = `Could not update the map: ${error.message}`;
   }
 }
 

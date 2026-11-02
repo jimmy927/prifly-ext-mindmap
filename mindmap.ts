@@ -4,17 +4,23 @@
  * layout — kept so circles do not jump and the layout is worked out again
  * only when what it shows changed.
  *
+ * Nothing is grouped or named without DeepInfra. A map is "good" only when the
+ * embeddings and the names exist for the items now; the last good map is kept
+ * in `api.state`. Until there is one, `view` answers with why there is none;
+ * after one, a failing call leaves the last good map on screen with the error.
+ *
  * Nothing runs on a timer: the page asks every few seconds while it is
- * visible, and each ask starts whatever is due in the background. A closed
- * map reads nothing.
+ * visible, and each ask starts whatever is due in the background (DeepInfra
+ * at most once a minute). A closed map reads nothing.
  */
 
 import { createHash } from "node:crypto";
 import type { ExtensionApi } from "@prifly/extension-api";
+import type { Failure } from "./deepinfra";
 import { deepInfraEmbed, type Embed, Embedder, embedText, textHash } from "./embed";
 import type { Point } from "./layout";
 import { knownLinks, relatedLinks } from "./links";
-import { type Chat, deepInfraChat, type ModelStatus, Namer } from "./model";
+import { type Chat, deepInfraChat, Namer } from "./model";
 import { sessionItems } from "./sessions";
 import { Sources } from "./sources";
 import { type Worked, workOut } from "./topics";
@@ -24,9 +30,24 @@ import { buildView, type MapView } from "./view";
 export const SESSIONS_EVERY_MS = 15_000;
 const VAULT_NAMES = ["deepinfra", "deepinfra-api"];
 const TOPICS_STATE = "topics";
+const MAP_STATE = "map";
+const SAVE_MAP_EVERY_MS = 60_000;
 const HOUR = 3_600_000;
 
 export type MindMapDeps = { chat?: Chat; embed?: Embed; sources?: Sources };
+
+/**
+ * What `api/map` answers:
+ * - "map": a good map. With `current` false it is the last good one, shown
+ *   because the data has moved on and no call has made a new one yet; `error`
+ *   says why, when a call failed. `updatedAt` is when it was last good (epoch ms).
+ * - "error": there has been no good map, and why.
+ * - "waiting": no good map yet and nothing has failed; the first calls are on their way.
+ */
+export type MapAnswer =
+  | { state: "map"; map: MapView; updatedAt: number; current: boolean; error: Failure | null }
+  | { state: "error"; error: Failure }
+  | { state: "waiting" };
 
 /** The DeepInfra key from the vault: the entry "deepinfra", else "deepinfra-api". */
 async function vaultKey(api: ExtensionApi): Promise<string | null> {
@@ -41,30 +62,8 @@ function shortModel(model: string): string {
   return model.split("/").at(-1) ?? model;
 }
 
-/** The footer's word on how the themes were made, and what is missing. */
-export function statusLine(
-  naming: ModelStatus,
-  similarity: ReturnType<Embedder["state"]>,
-  models: { chat: string; embed: string },
-): string {
-  if (naming === "no key" || similarity === "no key")
-    return "No DeepInfra key in the vault: topics by shared names and repositories, no similarity";
-  const names =
-    naming === "model"
-      ? `Names by ${shortModel(models.chat)}`
-      : naming === "failed"
-        ? "Naming failed: names from shared entities"
-        : "Names from shared entities until the model answers";
-  const similar =
-    similarity === "ok"
-      ? `similarity by ${shortModel(models.embed)}`
-      : similarity === "failed"
-        ? "similarity failed: topics by shared names"
-        : "similarity pending";
-  return `${names} · ${similar}`;
-}
-
 type SavedTopics = { topicOf: Record<string, string>; nextId: number };
+type SavedMap = { view: MapView; at: number };
 
 export class MindMap {
   private sessions: Item[] = [];
@@ -80,6 +79,11 @@ export class MindMap {
   private order: string[] = [];
   private colours = new Map<string, string>();
   private last: { key: string; view: MapView } | null = null;
+  private good: SavedMap | null = null;
+  private saved: { key: string | undefined; at: number } = {
+    key: undefined,
+    at: Number.NEGATIVE_INFINITY,
+  };
   private pending: Promise<void> = Promise.resolve();
   private readonly api: ExtensionApi;
 
@@ -98,10 +102,19 @@ export class MindMap {
 
   async load(): Promise<void> {
     await Promise.all([this.embedder.load(), this.namer.load()]);
-    const saved = await this.api.state?.get<SavedTopics>(TOPICS_STATE).catch(() => undefined);
+    const state = this.api.state;
+    const saved = await state?.get<SavedTopics>(TOPICS_STATE).catch(() => undefined);
     if (saved?.topicOf !== undefined && typeof saved.nextId === "number") {
       this.seeds = new Map(Object.entries(saved.topicOf));
       this.nextId = saved.nextId;
+    }
+    const map = await state?.get<SavedMap>(MAP_STATE).catch(() => undefined);
+    if (map !== undefined && Array.isArray(map.view?.nodes) && typeof map.at === "number") {
+      this.good = map;
+      this.remember(
+        map.view,
+        map.view.themes.map((theme) => theme.id),
+      );
     }
   }
 
@@ -145,14 +158,28 @@ export class MindMap {
     return worked;
   }
 
-  /** What the map shows now; starts the reads, the embedding and the naming that are due. */
-  view(now: number): MapView {
+  /** What `api/map` answers now; starts the reads, the embedding and the naming that are due. */
+  view(now: number): MapAnswer {
     this.readSessions(now);
-    const worked = this.work(now);
-    this.pending = this.sources
+    this.pending = this.refresh(now);
+    const map = this.currentMap(now);
+    if (map !== null) {
+      this.keep(map, now);
+      return { state: "map", map, updatedAt: now, current: true, error: null };
+    }
+    const error = this.embedder.error() ?? this.namer.error();
+    if (this.good !== null)
+      return { state: "map", map: this.good.view, updatedAt: this.good.at, current: false, error };
+    return error === null ? { state: "waiting" } : { state: "error", error };
+  }
+
+  /** The reads, then the embedding, then (only with every vector) the naming. */
+  private refresh(now: number): Promise<void> {
+    return this.sources
       .refresh(now)
       .then(() => this.embedder.update(this.pool(), now))
       .then(() => {
+        if (!this.embedder.complete(this.pool())) return;
         const fresh = this.work(now);
         return this.namer.update(fresh.topics, fresh.entities, now);
       })
@@ -161,7 +188,6 @@ export class MindMap {
           error: error instanceof Error ? error.message : String(error),
         });
       });
-    return this.render(worked.items, this.sortingOf(worked));
   }
 
   /** Wait for the reads and the calls the last `view` started (for tests). */
@@ -169,9 +195,26 @@ export class MindMap {
     return this.pending;
   }
 
+  /** The map for the items now, or null while any embedding or name is missing. */
+  private currentMap(now: number): MapView | null {
+    if (!this.embedder.complete(this.pool())) return null;
+    const worked = this.work(now);
+    if (!this.namer.ready(worked.topics)) return null;
+    return this.render(worked.items, this.sortingOf(worked));
+  }
+
+  /** Remember a good map as the last one; in `api.state` when it changed, else at most once a minute. */
+  private keep(view: MapView, now: number): void {
+    this.good = { view, at: now };
+    const key = this.last?.key;
+    if (key === this.saved.key && now - this.saved.at < SAVE_MAP_EVERY_MS) return;
+    this.saved = { key, at: now };
+    void this.api.state?.set(MAP_STATE, this.good).catch(() => undefined);
+  }
+
   private sortingOf(worked: Worked): Sorting {
-    const sorting: Sorting = {
-      themes: worked.topics.map((topic) => this.namer.themeOf(topic, worked.entities)),
+    return {
+      themes: worked.topics.flatMap((topic) => this.namer.themeOf(topic) ?? []),
       themeOf: Object.fromEntries(worked.topicOf),
       lines: Object.fromEntries(worked.items.map((item) => [item.id, this.namer.linesOf(item)])),
       related: worked.related.map(({ a, b, label }) => ({
@@ -179,19 +222,24 @@ export class MindMap {
         b,
         label: label ?? this.namer.labelOf(a, b) ?? "similar",
       })),
-      by: this.namer.state() === "model" ? `model ${this.namer.model}` : "entities",
     };
-    return sorting;
+  }
+
+  /** Keep a map's places, themes and colours, so the next layout moves from them. */
+  private remember(view: MapView, order: string[]): void {
+    this.order = order;
+    this.colours = new Map(view.themes.map((theme) => [theme.id, theme.color]));
+    this.themes = new Map(view.nodes.map((node) => [node.id, node.theme]));
+    this.positions = new Map(
+      [...view.nodes, ...view.themes].map((node) => [node.id, { x: node.x, y: node.y }]),
+    );
   }
 
   private render(items: Item[], sorting: Sorting): MapView {
     const known = knownLinks(items);
     const links = [...known, ...relatedLinks(items, sorting, known)];
     const footer = {
-      model: statusLine(this.namer.state(), this.embedder.state(), {
-        chat: this.namer.model,
-        embed: this.embedder.model,
-      }),
+      model: `Names by ${shortModel(this.namer.model)} · similarity by ${shortModel(this.embedder.model)}`,
       skipped: this.sources.skipped(),
       sessions: items.filter((item) => item.kind === "session").length,
       conversations: items.filter((item) => item.kind === "conversation").length,
@@ -209,12 +257,8 @@ export class MindMap {
       colours: this.colours,
       footer,
     });
-    this.order = built.order;
+    this.remember(built.view, built.order);
     this.colours = built.colours;
-    this.themes = new Map(built.view.nodes.map((n) => [n.id, n.theme]));
-    this.positions = new Map(
-      [...built.view.nodes, ...built.view.themes].map((n) => [n.id, { x: n.x, y: n.y }]),
-    );
     this.last = { key, view: built.view };
     return built.view;
   }

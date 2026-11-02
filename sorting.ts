@@ -1,11 +1,10 @@
 /**
- * Naming a topic: what the model is sent for one cluster, how its answer is
- * read (zod), and the name without it — the entity most members share, or
- * the repository — with summaries from brief lines.
+ * Naming a topic: what the model is sent for one cluster, and how its answer
+ * is read (zod). Nothing is named without the model.
  */
 
 import { z } from "zod";
-import { commonEntity, type Entity, fold, SERVICES } from "./entities";
+import { fold, SERVICES } from "./entities";
 import type { Item, Theme } from "./types";
 
 /** A summary line's length, in characters: about what fits under a circle's title. */
@@ -19,42 +18,6 @@ export function shorten(text: string, chars = LINE_CHARS): string {
   const space = cut.lastIndexOf(" ");
   const word = space >= chars * 0.6 ? cut.slice(0, space) : flat.slice(0, chars);
   return `${word.replace(/[\s,.;:-]+$/, "")}…`;
-}
-
-/** Two lines for an item without the model: its brief's first two, a conversation's subject and head, or none. */
-export function fallbackLines(item: Item): string[] {
-  if (item.brief.length > 0) return item.brief.slice(0, 2).map((line) => shorten(line));
-  const lines = [item.subject, item.head].filter(
-    (line): line is string => line !== undefined && line !== "",
-  );
-  return lines.slice(0, 2).map((line) => shorten(line));
-}
-
-function plural(n: number, word: string): string {
-  return `${n} ${word}${n === 1 ? "" : "s"}`;
-}
-
-/** "2 sessions, 3 chats": what a topic holds. */
-export function countsOf(members: readonly Item[]): string {
-  const sessions = members.filter((m) => m.kind === "session").length;
-  const conversations = members.filter((m) => m.kind === "conversation").length;
-  const cards = members.filter((m) => m.kind === "card").length;
-  const parts = [
-    sessions > 0 ? plural(sessions, "session") : "",
-    conversations > 0 ? plural(conversations, "chat") : "",
-    cards > 0 ? plural(cards, "card") : "",
-  ].filter((part) => part !== "");
-  return shorten(parts.join(", "), 26);
-}
-
-/** A topic's theme without the model: named by the entity most members share, else its repository, else "Other". */
-export function fallbackTheme(
-  id: string,
-  members: readonly Item[],
-  entities: ReadonlyMap<string, readonly Entity[]>,
-): Theme {
-  const name = commonEntity(members, entities) ?? "Other";
-  return { id, name: shorten(name, 18), sub: countsOf(members) };
 }
 
 /** What the namer is told of one member. */

@@ -8,6 +8,7 @@
 
 import { createHash } from "node:crypto";
 import type { ExtensionStateApi } from "@prifly/extension-api";
+import { type Failure, failedResponse, failureOf, noKeyFailure } from "./deepinfra";
 import { wordsOf } from "./entities";
 import type { Item } from "./types";
 
@@ -40,10 +41,7 @@ export const deepInfraEmbed: Embed = async (key, model, texts) => {
     }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`DeepInfra answered ${response.status}: ${body.slice(0, 200)}`);
-  }
+  if (!response.ok) throw await failedResponse(response);
   const json = (await response.json()) as { data?: { index?: number; embedding?: unknown }[] };
   const data = [...(json.data ?? [])].sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
   const vectors = data.map((row) => row.embedding);
@@ -86,8 +84,6 @@ export function cosine(a: readonly number[], b: readonly number[]): number {
   return na === 0 || nb === 0 ? 0 : dot / Math.sqrt(na * nb);
 }
 
-export type EmbedStatus = "ok" | "no key" | "failed" | "waiting";
-
 export type EmbedderDeps = {
   key: () => Promise<string | null>;
   embed: Embed;
@@ -102,7 +98,7 @@ export class Embedder {
   private vectors = new Map<string, number[]>();
   private askedAt = Number.NEGATIVE_INFINITY;
   private busy = false;
-  private status: EmbedStatus = "waiting";
+  private failure: Failure | null = null;
   /** Bumped whenever vectors are added, so what is worked out from them knows to redo it. */
   version = 0;
   readonly model: string;
@@ -143,7 +139,7 @@ export class Embedder {
     try {
       const key = await this.deps.key();
       if (key === null || key === "") {
-        this.status = "no key";
+        this.failure = noKeyFailure("embedding");
         return;
       }
       await this.call(key, this.missing(items).slice(0, BATCH));
@@ -160,12 +156,12 @@ export class Embedder {
         const vector = vectors[i];
         if (vector !== undefined) this.vectors.set(textHash(text), shrink(vector));
       });
-      this.status = "ok";
+      this.failure = null;
       this.version += 1;
       this.deps.log?.("embedded", { texts: texts.length, ms: Date.now() - started });
       await this.save();
     } catch (error) {
-      this.status = "failed";
+      this.failure = failureOf("embedding", error);
       this.deps.log?.("embed_failed", {
         error: error instanceof Error ? error.message : String(error),
       });
@@ -179,9 +175,13 @@ export class Embedder {
     await this.deps.state?.set(STATE_NAME, saved).catch(() => undefined);
   }
 
-  /** "ok" once any vector is at hand, else why not. */
-  state(): EmbedStatus {
-    if (this.status === "waiting" && this.vectors.size > 0) return "ok";
-    return this.status;
+  /** Whether every text of `items` has its vector: only then can they be grouped. */
+  complete(items: readonly Item[]): boolean {
+    return this.missing(items).length === 0;
+  }
+
+  /** Why texts are left without a vector (no key, a failed call); null after a call that worked. */
+  error(): Failure | null {
+    return this.failure;
   }
 }

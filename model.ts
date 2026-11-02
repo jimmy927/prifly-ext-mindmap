@@ -4,14 +4,15 @@
  * for the theme's name, a line under it, two summary lines per member and
  * labels for the pairs only embeddings tie. At most one round of calls a
  * minute; answers are kept in `api.state`. A topic keeps its name while its
- * members barely change. No key, a failed call or a bad answer: the topic is
- * named by the entity its members share.
+ * members barely change. No key, a failed call or a bad answer: nothing is
+ * named, and `error` says why.
  */
 
 import type { ExtensionStateApi } from "@prifly/extension-api";
+import { type Failure, failedResponse, failureOf, noKeyFailure } from "./deepinfra";
 import { embedText, textHash } from "./embed";
-import { type Entity, pairKey } from "./entities";
-import { fallbackLines, fallbackTheme, namePrompt, parseNaming } from "./sorting";
+import { commonEntity, type Entity, pairKey } from "./entities";
+import { namePrompt, parseNaming } from "./sorting";
 import type { Item, Theme } from "./types";
 
 export const MODEL = "google/gemma-4-26B-A4B-it";
@@ -40,10 +41,7 @@ export const deepInfraChat: Chat = async (key, model, messages) => {
     }),
     signal: AbortSignal.timeout(TIMEOUT_MS),
   });
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    throw new Error(`DeepInfra answered ${response.status}: ${body.slice(0, 200)}`);
-  }
+  if (!response.ok) throw await failedResponse(response);
   const json = (await response.json()) as { choices?: { message?: { content?: unknown } }[] };
   const content = json.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new Error("DeepInfra's answer had no message");
@@ -69,9 +67,6 @@ export type NamerDeps = {
   model?: string;
 };
 
-/** What the map shows of the model: whether it named, and why not. */
-export type ModelStatus = "model" | "no key" | "failed" | "waiting";
-
 export function jaccard(a: readonly string[], b: readonly string[]): number {
   const x = new Set(a);
   const y = new Set(b);
@@ -88,7 +83,7 @@ export class Namer {
   private saved: Saved = { topics: {}, lines: {}, labels: {} };
   private askedAt = Number.NEGATIVE_INFINITY;
   private busy = false;
-  private status: ModelStatus = "waiting";
+  private failure: Failure | null = null;
   readonly model: string;
   private readonly deps: NamerDeps;
 
@@ -102,7 +97,6 @@ export class Namer {
     const saved = await this.deps.state?.get<Saved>(STATE_NAME).catch(() => undefined);
     if (saved?.topics === undefined || saved.lines === undefined) return;
     this.saved = { topics: saved.topics, lines: saved.lines, labels: saved.labels ?? {} };
-    if (Object.keys(saved.topics).length > 0) this.status = "model";
   }
 
   /** The name a topic keeps: the model's, while its members barely changed. */
@@ -140,16 +134,20 @@ export class Namer {
     try {
       const key = await this.deps.key();
       if (key === null || key === "") {
-        this.status = "no key";
+        this.failure = noKeyFailure("naming");
         return;
       }
       const due = topics.filter((t) => this.isDue(t));
       const started = Date.now();
       const results = await Promise.all(due.map((t) => this.name(key, t, entities)));
-      const failed = results.filter((ok) => !ok).length;
-      // One failed topic keeps its entity name and is asked again; the footer says "failed" only when none was named.
-      this.status = failed === due.length ? "failed" : "model";
-      this.deps.log?.("named", { topics: due.length, failed, ms: Date.now() - started });
+      const failures = results.filter((result) => result !== null);
+      // A failed topic stays unnamed and is asked again; the others are kept.
+      this.failure = failures[0] ?? null;
+      this.deps.log?.("named", {
+        topics: due.length,
+        failed: failures.length,
+        ms: Date.now() - started,
+      });
       this.prune(topics);
       await this.deps.state?.set(STATE_NAME, this.saved).catch(() => undefined);
     } finally {
@@ -157,20 +155,22 @@ export class Namer {
     }
   }
 
-  /** One topic's call. False when it failed or its answer was no valid naming. */
+  /** One topic's call. Why it failed when it did, or its answer was no valid naming; else null. */
   private async name(
     key: string,
     topic: TopicInfo,
     entities: ReadonlyMap<string, readonly Entity[]>,
-  ): Promise<boolean> {
+  ): Promise<Failure | null> {
     const kept = this.named(topic);
-    const shared = fallbackTheme(topic.id, topic.members, entities).name;
+    // What the members share goes to the model as a hint; it names nothing by itself.
+    const common = commonEntity(topic.members, entities);
+    const shared = common === null ? [] : [common];
     const keep = kept === null ? null : { id: topic.id, name: kept.name, sub: kept.sub };
     try {
       const text = await this.deps.chat(
         key,
         this.model,
-        namePrompt(topic.members, [shared], topic.pairs, keep),
+        namePrompt(topic.members, shared, topic.pairs, keep),
       );
       const naming = parseNaming(text, topic.members);
       if (naming === null)
@@ -182,7 +182,7 @@ export class Namer {
         sub: kept?.sub ?? naming.sub,
       };
       for (const member of topic.members) {
-        const lines = naming.lines.get(member.id) ?? fallbackLines(member);
+        const lines = naming.lines.get(member.id) ?? [];
         this.saved.lines[member.id] = { hash: hashOf(member), lines };
       }
       for (const [a, b] of topic.pairs) {
@@ -191,13 +191,13 @@ export class Namer {
         );
         this.saved.labels[pairKey(a, b)] = given?.label ?? "related";
       }
-      return true;
+      return null;
     } catch (error) {
       this.deps.log?.("name_failed", {
         topic: topic.id,
         error: error instanceof Error ? error.message : String(error),
       });
-      return false;
+      return failureOf("naming", error);
     }
   }
 
@@ -215,19 +215,21 @@ export class Namer {
     };
   }
 
-  /** A topic's theme: the model's name while its members barely changed, else the entity they share. */
-  themeOf(topic: TopicInfo, entities: ReadonlyMap<string, readonly Entity[]>): Theme {
-    const named = this.status === "no key" ? null : this.named(topic);
-    if (named !== null) return { id: topic.id, name: named.name, sub: named.sub };
-    return fallbackTheme(topic.id, topic.members, entities);
+  /** Whether every topic has its name, every member its lines and every pair its label, as the topics are now. */
+  ready(topics: readonly TopicInfo[]): boolean {
+    return topics.every((topic) => !this.isDue(topic));
   }
 
-  /** An item's two lines: the model's while its text is unchanged, else from its brief. */
+  /** A topic's theme: the model's name, kept while its members barely changed; null while it has none. */
+  themeOf(topic: TopicInfo): Theme | null {
+    const named = this.named(topic);
+    return named === null ? null : { id: topic.id, name: named.name, sub: named.sub };
+  }
+
+  /** An item's two lines: the model's while its text is unchanged. */
   linesOf(item: Item): string[] {
     const saved = this.saved.lines[item.id];
-    if (saved !== undefined && saved.hash === hashOf(item) && saved.lines.length > 0)
-      return saved.lines;
-    return fallbackLines(item);
+    return saved !== undefined && saved.hash === hashOf(item) ? saved.lines : [];
   }
 
   /** The model's label for a pair only similarity ties, if it gave one. */
@@ -235,7 +237,8 @@ export class Namer {
     return this.saved.labels[pairKey(a, b)];
   }
 
-  state(): ModelStatus {
-    return this.status;
+  /** Why the last naming round left topics unnamed (no key, a failed call, a bad answer); null after one that worked. */
+  error(): Failure | null {
+    return this.failure;
   }
 }

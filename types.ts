@@ -105,7 +105,7 @@ export type Item = {
 
 export type Theme = { id: string; name: string; sub: string };
 
-/** What the model (or the fallback) made of the items. */
+/** What the embeddings and the model made of the items. */
 export type Sorting = {
   themes: Theme[];
   /** Item id → theme id. */
@@ -113,8 +113,6 @@ export type Sorting = {
   /** Item id → two short summary lines. */
   lines: Record<string, string[]>;
   related: { a: string; b: string; label: string }[];
-  /** "model <name>" when the model named the topics, else "entities". */
-  by: string;
 };
 
 export type LinkKind = "started" | "waits on" | "ticket" | "related";

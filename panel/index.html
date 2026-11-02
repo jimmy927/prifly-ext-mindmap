@@ -17,6 +17,15 @@
       <div class="stage" id="stage">
         <svg id="map" viewBox="0 0 1680 1060" role="img" aria-label="Mind map of your sessions"></svg>
         <p class="message" id="message">Reading your sessions…</p>
+        <section class="problem" id="problem" aria-live="polite" hidden>
+          <p class="chip" id="problem-chip"></p>
+          <h1 id="problem-title">Mind map</h1>
+          <p class="why" id="problem-text"></p>
+          <p class="hint">
+            The map appears on its own once DeepInfra answers. This page asks again every few
+            seconds, and the extension tries DeepInfra once a minute.
+          </p>
+        </section>
       </div>
       <div class="legend" id="legend"></div>
       <div class="footer" id="footer" aria-live="polite"></div>

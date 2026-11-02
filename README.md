@@ -17,8 +17,8 @@ and it opens over nearly the whole window.
   share: the person's first name, the repository, the ticket id - or, for a
   pair only embeddings tie, the model's 1-2 words.
 - Conversations and cards are smaller circles, ringed in their service's
-  colour. A legend runs along the bottom; the footer says how the themes were
-  made and which sources could not be read.
+  colour. A legend runs along the bottom; the footer says which models made
+  the map and which sources could not be read.
 
 Clicking a session opens it in prifly. Clicking a card opens it in Trello, and a
 conversation opens its link when its tool gave one. The map never sends a
@@ -48,7 +48,7 @@ at most 40 sessions are drawn.
 
 Conversations and cards need prifly's `read-tools` feature, and the solid links
 and brief summaries its `session-facts` feature. On a prifly without them the map
-shows sessions only, themed by repository.
+shows sessions only.
 
 ## The themes
 
@@ -86,10 +86,23 @@ about 6 s and cost about $0.0006; later refreshes send only what changed.
 
 It needs a DeepInfra key in prifly's vault: an `api-token` entry named
 `deepinfra` (or `deepinfra-api`) at level 1, the one level an extension can read.
-Without one, or when a call fails, entity matching and clustering still run (no
-embeddings), so themes still mix services where items share a person or a name;
-each is named by the entity most of its members share, or its repository, and
-the footer says what is missing.
+Nothing is grouped or named without DeepInfra: shared entities only add edges to
+the clustering, together with the embeddings. A map is _good_ only when the
+embeddings and the names exist for the items on it now, and the last good map is
+kept in `api.state`, so a restart still shows it.
+
+- **Before there has been a good map** (no key in the vault, a failed embedding
+  call, a failed naming call): `api/map` answers an error state and the panel
+  shows an error page in place of the map. It says why: "No DeepInfra key in the
+  vault (an api-token entry named deepinfra or deepinfra-api, at level 1)", or
+  DeepInfra's HTTP status and short message. The page keeps asking, the
+  extension tries DeepInfra again once a minute, and the map appears on its own
+  once the calls succeed.
+- **After a good map**: a failing call, or a missing key, leaves the last good
+  map on screen as it was (positions, themes, names), with the error in the
+  footer and when the map was last updated ("Last updated 14:32"). A change in
+  the items, such as a new session, shows once its embedding and name have
+  arrived; until then the last good map stays.
 
 ## The layout
 

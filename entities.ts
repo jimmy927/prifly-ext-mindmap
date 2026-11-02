@@ -372,9 +372,10 @@ function addShare(
 }
 
 /**
- * A theme's name without the model: the entity most of its members carry
- * (a person, a ticket, a card, a domain, a repository, then a word), else the
- * repository most of its sessions are in; null when there is none.
+ * What the members of a topic share, as a hint for the model that names it:
+ * the entity most of them carry (a person, a ticket, a card, a domain, a
+ * repository, then a word), else the repository of its first session; null
+ * when there is none. Nothing is named by it.
  */
 export function commonEntity(
   members: readonly Item[],
