@@ -40,7 +40,7 @@ const SYSTEM = [
   '{"name":"2-3 words","sub":"3-5 words","items":[{"id":"i1","lines":["<=22 chars","<=22 chars"]}],"pairs":[{"a":"i1","b":"i2","label":"1-2 words"}]}',
   "name: what the items are about (a product, a customer, a person, a chore). Never a tool or service such as WhatsApp, Gmail or Trello.",
   "items: every item once, with two summary lines of at most 22 characters each, saying what it is doing, needs, or is about.",
-  "A summary line must not repeat or merely shorten the item's title, and must not say a generic thing such as \"Person contact\" or \"Message from\".",
+  'A summary line must not repeat or merely shorten the item\'s title, and must not say a generic thing such as "Person contact" or "Message from".',
   '"otherThemes" lists the names of the other themes on the map. Your name must be distinct from them: it must not share its main word with any of them (not "Prifly and ODI" next to "Prifly Project").',
   'No catch-all names: never "Mixed", "Misc", "Other", "General", "Personal and Work", "Various", "Activity" or an "X and Y" pairing of two unrelated things. Name what the members have in common.',
   "pairs: for each pair you are given, 1-2 words naming what the two items share.",

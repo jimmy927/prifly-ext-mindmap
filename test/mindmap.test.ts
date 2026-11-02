@@ -345,7 +345,10 @@ function twoGroups(): { options: FakeOptions; ids: Record<string, string>; deps:
 /** Last time's topics: beta 3 sat with the alpha sessions. */
 function oldTopics(ids: Record<string, string>) {
   const topicOf = Object.fromEntries(
-    Object.entries(ids).map(([title, id]) => [id, title.startsWith("beta") && title !== "beta 3" ? "t2" : "t1"]),
+    Object.entries(ids).map(([title, id]) => [
+      id,
+      title.startsWith("beta") && title !== "beta 3" ? "t2" : "t1",
+    ]),
   );
   return { topicOf, nextId: 3 };
 }

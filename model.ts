@@ -148,7 +148,8 @@ export class Namer {
       const started = Date.now();
       // One after the other, so each topic is told the names the others have by then.
       const results: (Failure | null)[] = [];
-      for (const t of due) results.push(await this.name(key, t, entities, this.othersOf(t, topics)));
+      for (const t of due)
+        results.push(await this.name(key, t, entities, this.othersOf(t, topics)));
       const failures = results.filter((result) => result !== null);
       // A failed topic stays unnamed and is asked again; the others are kept.
       this.failure = failures[0] ?? null;
