@@ -15,10 +15,11 @@ and it opens over nearly the whole window.
   session _waits on_ another, a card is a session's _ticket_. **Dashed curves**
   with an italic label join items about the same thing, labelled by what they
   share: the person's first name, the repository, the ticket id - or, for a
-  pair only embeddings tie, the model's 1-2 words.
+  pair only the model sees, its 1-2 words.
 - Conversations and cards are smaller circles, ringed in their service's
-  colour. A legend runs along the bottom; the footer says which models made
-  the map and which sources could not be read.
+  colour. A legend runs along the bottom; the footer says which model made the
+  topics ("Topics by claude-haiku via Claude") and which sources could not be
+  read.
 
 Clicking a session opens it in prifly. Clicking a card opens it in Trello, and a
 conversation opens its link when its tool gave one. The map never sends a
@@ -29,13 +30,12 @@ message or changes anything.
 The page asks for the map every 5 s while it is visible, and not at all while it
 is hidden; nothing is read for a closed map. Each ask starts what is due:
 
-| What                                                                                             | How often                                                              |
-| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
-| Sessions (`api.sessions()`)                                                                      | every 15 s, so a new session shows within 15 s                         |
-| WhatsApp, Gmail (`newer_than:3d`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                                            |
-| Instagram, LinkedIn, Messenger (they drive your browser)                                         | every 15 min                                                           |
-| Embeddings                                                                                       | for new or changed items only, one batched call, at most once a minute |
-| Naming                                                                                           | one short call per new or changed theme, at most one round a minute    |
+| What                                                                                             | How often                                              |
+| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
+| Sessions (`api.sessions()`)                                                                      | every 15 s, so a new session shows within 15 s         |
+| WhatsApp, Gmail (`newer_than:3d`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                            |
+| Instagram, LinkedIn, Messenger (they drive your browser)                                         | every 15 min                                           |
+| Grouping and naming (`api.llm.ask`, the fast tier)                                               | one call when the items changed, at most once a minute |
 
 Each source is one listing call through `api.tools.read` - never a loop over
 threads, and nothing is marked read. A missing or failing source is skipped and
@@ -52,77 +52,73 @@ shows sessions only.
 
 ## The themes
 
-Themes are topic clusters, worked out in three steps:
+The model groups and names. Shared entities are the only thing worked out in
+code, and they only help the model:
 
 1. **Shared entities, no model** (`entities.ts`). People (a chat's name, a mail's
    sender and address, a WhatsApp number), mail domains, repositories, card
    names, ticket-like ids (`SHOP-12`, `prifly-541`) and rarer words are read out
    of each item's title, brief lines, name, subject and last message. A person
    is also found by their first name in another item's text ("Reply to Ada").
-   Two items that share one get a strong edge. A service's name is never an
-   entity, and one on more than 4-6 items (the reader's own name, a surname, a
-   word every mail has) ties nothing.
-2. **Embeddings** (`embed.ts`). Each item's own words - never its service - go to
-   `google/embeddinggemma-300m` on DeepInfra's OpenAI-compatible embeddings
-   endpoint (multilingual, Swedish and English). Vectors are cut to 256
-   dimensions and cached in `api.state` by a hash of the text. A pair above
-   cosine 0.84 gets a weak edge (EmbeddingGemma's cosines run high: on 87 real
-   texts the median pair was 0.75, the top 1 % above 0.90).
-3. **Clustering** (`cluster.ts`). Louvain community detection on the weighted
-   graph, written here and deterministic, gives 6 to 9 topics. Each item starts
-   in its last topic and is a little sticky there, so one new item does not
-   reshuffle the map, and a topic keeps its id while most of its members stay.
-   An item with no edge joins the nearest topic by embedding, or its
-   repository's. The saved topics record which embedding model they were built
-   with. Topics saved by a run without these embeddings (an older version, or
-   another model) are not a seed: that run is a fresh Louvain run, so the
-   embeddings can move items out of a topic they were stuck in, the topics get
-   new ids, they are named anew, and the result is saved with the model. Every
-   later run is sticky again.
-
-The model only names: `google/gemma-4-26B-A4B-it` on DeepInfra gets one short
-call per new or changed topic, with its members' titles, brief lines, subjects
-and the start of the last message, and answers the theme's name, a line under
-it, two summary lines per member and labels for the pairs only embeddings tie.
-The answer is checked with zod and kept in `api.state`; a topic keeps its name
-while its members barely change.
+   Two items that share one make a pair with a label ("Ada", "SHOP-12"). A
+   service's name is never an entity, and one on more than 4-6 items (the
+   reader's own name, a surname, a word every mail has) ties nothing. The pairs
+   also decide which conversations and cards are drawn (the ones that match a
+   session best first).
+2. **One model call** (`grouping.ts`, `sorting.ts`). Each refresh where the items
+   changed - their ids, titles, repositories, brief lines and, for a
+   conversation, its name, subject and the start of its last message - the
+   extension makes one `api.llm.ask` call on prifly's **fast tier**. It sends
+   all the items, and two hints: the shared-entity pairs with their labels, and
+   the previous topics (id, name, members) so topics keep their ids and names
+   while their members stay. It passes a JSON Schema and asks for the topics
+   (`id`, `name`, `sub`), each item's topic and two summary lines, and the
+   related pairs with 1-2 word labels. The answer is validated with zod (the
+   schema comes from the same zod definition), kept in `api.state` and used for
+   exactly the items it was made for; a restart does not ask again. Nothing is
+   grouped without the model.
 
 The prompt carries rules for the names and lines, and `rules.ts` checks them
-after parsing. Topics are named one after another and each call is sent the
-other themes' names. A theme name is bad when it shares its main word (any
-subject word of three letters or more, leaving out filler such as "project" or
+after parsing. A theme name is bad when it shares its main word (any subject
+word of three letters or more, leaving out filler such as "project" or
 "support") with another theme's name, or is a catch-all ("Mixed", "Misc",
 "Other", "General", "Various", "Activity", "Personal and Work"). A summary line
 is bad when it equals, starts, or sits inside its item's title (case and
 punctuation ignored), or is generic ("Person contact", "Message from"). A bad
-part sends the topic back to the model once with the reason. If a bad part
-remains, the topic keeps its last good name (with no earlier name, an overlap
-is kept and a catch-all leaves the topic unnamed, to be asked again), and a bad
-line is left out, so the circle shows none rather than a repeat of its title.
-Measured before the naming was made one at a time, on 28 real sessions and 60
-listed chats and mails, a first refresh (87 distinct texts embedded, 48 items
-drawn, 6 topics named in parallel) took about 6 s and cost about $0.0006; later
-refreshes send only what changed.
+part, or an answer that leaves an item without a topic, sends the same call back
+once with the reasons. If a bad part remains, the topic keeps its last good name
+(with no earlier name, an overlap is kept and a catch-all makes the answer
+unusable), and a bad line is left out, so the circle shows none rather than a
+repeat of its title.
 
-It needs a DeepInfra key in prifly's vault: an `api-token` entry named
-`deepinfra` (or `deepinfra-api`) at level 1, the one level an extension can read.
-Nothing is grouped or named without DeepInfra: shared entities only add edges to
-the clustering, together with the embeddings. A map is _good_ only when the
-embeddings and the names exist for the items on it now, and the last good map is
-kept in `api.state`, so a restart still shows it.
+## The model
 
-- **Before there has been a good map** (no key in the vault, a failed embedding
-  call, a failed naming call): `api/map` answers an error state and the panel
-  shows an error page in place of the map. It says why: "No DeepInfra key in the
-  vault (an api-token entry named deepinfra or deepinfra-api, at level 1)", or
-  DeepInfra's HTTP status and short message. The page keeps asking, the
-  extension tries DeepInfra again once a minute, and the map appears on its own
-  once the calls succeed.
-- **After a good map**: a failing call or a missing key, met when a call is due, leaves the last good
-  map on screen as it was (positions, themes, names), with the error in the
-  footer and when the map was last updated ("Last updated 14:32"). A change in
-  the items, such as a new session, shows once its embedding and name have
-  arrived; until then the last good map stays.
+**No key is needed.** The extension asks prifly for a model through
+`api.llm.ask` (prifly's feature `llm-ask`); prifly picks the model and the
+backend (Claude, Codex or a provider the reader set up) and applies its own
+limits. The manifest asks for the `fast` tier only, with the reason prifly shows
+the reader: "Groups your sessions, chats, mails and cards into topics and names
+them." The footer says which model answered: "Topics by claude-haiku via
+Claude". The published `@prifly/extension-api` does not have `api.llm` yet, so
+its types are in `llm.ts`, all optional.
+
+A map is _good_ only when the model's answer is for the items on it now, and
+the last good map is kept in `api.state`, so a restart still shows it. What the
+reader sees when prifly has no model for the map:
+
+- **Before there has been a good map**: `api/map` answers an error state and the
+  panel shows an error page in place of the map. On a prifly without the
+  `llm-ask` feature it says "This prifly cannot lend the map a model yet: update
+  prifly." When prifly answers `no-model`, `not-allowed`, `capped` or `failed`,
+  the page shows prifly's own one-sentence reason (for instance that no model is
+  set up yet). An answer that stays unusable after the one retry says so. The
+  page keeps asking, the extension tries again once a minute (also after a
+  failure), and the map appears on its own once the model answers.
+- **After a good map**: the same reasons leave the last good map on screen as it
+  was (positions, themes, names), with the reason in the footer and when the map
+  was last updated ("Last updated 14:32"). A change in the items, such as a new
+  session, shows once the model has grouped it; until then the last good map
+  stays.
 
 ## The layout
 

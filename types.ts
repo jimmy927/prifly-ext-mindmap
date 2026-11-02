@@ -105,7 +105,7 @@ export type Item = {
 
 export type Theme = { id: string; name: string; sub: string };
 
-/** What the embeddings and the model made of the items. */
+/** What the model made of the items. */
 export type Sorting = {
   themes: Theme[];
   /** Item id → theme id. */

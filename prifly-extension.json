@@ -4,7 +4,10 @@
   "description": "A live radial mind map of your prifly sessions, the conversations they are about and their Trello cards, sorted into themes and linked.",
   "version": "0.1.0",
   "main": "index.ts",
-  "vault": ["deepinfra", "deepinfra-api"],
+  "llm": {
+    "tiers": ["fast"],
+    "why": "Groups your sessions, chats, mails and cards into topics and names them."
+  },
   "reads": [
     "whatsapp_chats",
     "gmail_search",

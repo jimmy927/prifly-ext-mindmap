@@ -1,14 +1,15 @@
 import { describe, expect, test } from "bun:test";
-import { louvain } from "../cluster";
-import { EMBED_GAP_MS, EMBED_MODEL, type Embed, Embedder, embedText } from "../embed";
+import { readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { entitiesOf, entityEdges, pairKey } from "../entities";
 import { keepConversations, MAX_CONVERSATIONS } from "../sources";
-import { workOut } from "../topics";
+import { MAX_RELATED, pick, relatedOf } from "../topics";
 import type { Item } from "../types";
-import { fakeState, item } from "./fake";
+import { item } from "./fake";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
 const HOUR = 3_600_000;
+const ROOT = join(import.meta.dir, "..");
 
 const sid = (n: number) => `${n.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`;
 
@@ -59,10 +60,6 @@ function world(): { sessions: Item[]; others: Item[] } {
   return { sessions, others };
 }
 
-function run(input = world(), previous = new Map<string, string>(), nextId = 1) {
-  return workOut({ ...input, vectorOf: () => undefined, previous, nextId, now: NOW });
-}
-
 describe("shared entities", () => {
   test("a WhatsApp chat, a mail and a session naming the same person are linked across services", () => {
     const items = [
@@ -104,127 +101,36 @@ describe("shared entities", () => {
   });
 });
 
-describe("clustering", () => {
-  test("is deterministic, and two cliques joined by one edge stay two", () => {
-    const row = (pairs: [number, number][]) => new Map(pairs);
-    const adj = [
-      row([
-        [1, 1],
-        [2, 1],
-      ]),
-      row([
-        [0, 1],
-        [2, 1],
-      ]),
-      row([
-        [0, 1],
-        [1, 1],
-        [3, 0.1],
-      ]),
-      row([
-        [2, 0.1],
-        [4, 1],
-        [5, 1],
-      ]),
-      row([
-        [3, 1],
-        [5, 1],
-      ]),
-      row([
-        [3, 1],
-        [4, 1],
-      ]),
+describe("what the model is given", () => {
+  test("the pairs that share an entity are the hints, labelled by it, across services first", () => {
+    const picked = pick({ ...world(), now: NOW });
+    const labelOf = (a: string, b: string) =>
+      picked.shared.find((p) => pairKey(p.a, p.b) === pairKey(a, b))?.label;
+    expect(labelOf(sid(1), "c:whatsapp_chats:ada")).toBe("Ada");
+    expect(labelOf("c:whatsapp_chats:ada", "c:gmail_search:m1")).toBe("Ada");
+    expect(picked.items.map((i) => i.id)).toContain("k:c1");
+  });
+
+  test("related links join the entity pairs and the model's pairs, minus pairs the entities already tie", () => {
+    const picked = pick({ ...world(), now: NOW });
+    const found = [
+      { a: sid(1), b: "c:gmail_search:m1", label: "same again" },
+      { a: sid(3), b: "nowhere", label: "gone" },
     ];
-    const init = [0, 1, 2, 3, 4, 5];
-    expect(louvain(adj, init)).toEqual([0, 0, 0, 1, 1, 1]);
-    expect(louvain(adj, init)).toEqual(louvain(adj, init));
-  });
-
-  test("topics mix kinds and services; none is all one service", () => {
-    const worked = run();
-    const byId = new Map(worked.items.map((i) => [i.id, i]));
-    const ada = worked.topicOf.get("c:whatsapp_chats:ada");
-    expect(worked.topicOf.get("c:gmail_search:m1")).toBe(ada ?? "");
-    expect(worked.topicOf.get(sid(1))).toBe(ada ?? "");
-    for (const topic of worked.topics) {
-      const services = new Set(
-        topic.members.map((m) => (m.kind === "session" ? "session" : m.repo)),
-      );
-      if (topic.members.length > 1) expect(services.size).toBeGreaterThan(1);
-    }
-    const mixed = worked.topics.filter((t) => new Set(t.members.map((m) => m.kind)).size > 1);
-    expect(mixed.length).toBeGreaterThanOrEqual(3);
-    expect(byId.size).toBe(12);
-  });
-
-  test("related links join the person's chat and mail, labelled by the person", () => {
-    const worked = run();
-    const link = worked.related.find(
-      (r) => pairKey(r.a, r.b) === pairKey("c:whatsapp_chats:ada", "c:gmail_search:m1"),
-    );
-    expect(link?.label).toBe("Ada");
-    expect(worked.related.length).toBeLessThanOrEqual(20);
-  });
-
-  test("adding one item keeps every other item's topic and the topics' ids", () => {
-    const first = run();
-    const input = world();
-    input.others.push(chat("dan", "Dan Brown", "Lunch?"));
-    input.sessions.push(item({ id: sid(9), title: "Refund webhook for Ada", repo: "shop" }));
-    const second = run(input, first.topicOf, first.nextId);
-    for (const [id, topic] of first.topicOf) expect(second.topicOf.get(id)).toBe(topic);
-    expect(second.topicOf.get(sid(9))).toBe(first.topicOf.get(sid(1)) ?? "");
-  });
-});
-
-describe("embeddings", () => {
-  function embedder() {
-    const sent: string[][] = [];
-    const embed: Embed = async (_key, model, texts) => {
-      expect(model).toBe(EMBED_MODEL);
-      sent.push(texts);
-      return texts.map((text) => Array.from({ length: 300 }, (_, i) => (text.length + i) % 7));
+    const related = relatedOf(picked, found);
+    expect(
+      related.find((r) => pairKey(r.a, r.b) === pairKey(sid(1), "c:gmail_search:m1"))?.label,
+    ).toBe("Ada");
+    const lone = {
+      items: [item({ id: "x1" }), item({ id: "x2" })],
+      entities: new Map(),
+      shared: [],
     };
-    const state = fakeState();
-    return { e: new Embedder({ key: async () => "k", embed, state }), sent, state };
-  }
-
-  test("uses EmbeddingGemma, sends each item's own words, never its service", async () => {
-    expect(EMBED_MODEL).toBe("google/embeddinggemma-300m");
-    const { e, sent } = embedder();
-    const items = world().others;
-    await e.update(items, 0);
-    expect(sent).toHaveLength(1);
-    expect(sent[0]?.join(" ")).not.toContain("WhatsApp");
-    expect(sent[0]).toContain(embedText(items[0] ?? item({ id: "x" })));
-    expect(e.vectorOf(items[0] ?? item({ id: "x" }))).toHaveLength(256);
-  });
-
-  test("the cache skips unchanged texts, and at most one call a minute", async () => {
-    const { e, sent, state } = embedder();
-    const items = world().others;
-    await e.update(items, 0);
-    await e.update(items, EMBED_GAP_MS * 3);
-    expect(sent).toHaveLength(1);
-    const changed = items.map((i) =>
-      i.id === "c:whatsapp_chats:ada" ? { ...i, head: "Thanks!" } : i,
-    );
-    await e.update(changed, EMBED_GAP_MS * 3 + 1);
-    expect(sent).toHaveLength(2);
-    expect(sent[1]).toHaveLength(1);
-    // Another change within the minute waits for the minute to pass.
-    const again = changed.map((i) =>
-      i.id === "c:whatsapp_chats:bob" ? { ...i, head: "Numbers sent" } : i,
-    );
-    await e.update(again, EMBED_GAP_MS * 3 + 2);
-    expect(sent).toHaveLength(2);
-    await e.update(again, EMBED_GAP_MS * 4 + 1);
-    expect(sent).toHaveLength(3);
-    expect(sent[2]).toHaveLength(1);
-    // A restart reads the cached vectors and sends nothing.
-    const restarted = new Embedder({ key: async () => "k", embed: async () => [], state });
-    await restarted.load();
-    expect(restarted.due(again, EMBED_GAP_MS * 10)).toBe(false);
+    expect(relatedOf(lone, [{ a: "x1", b: "x2", label: "money" }])).toEqual([
+      { a: "x1", b: "x2", label: "money" },
+    ]);
+    expect(related.some((r) => r.b === "nowhere")).toBe(false);
+    expect(related.length).toBeLessThanOrEqual(MAX_RELATED);
   });
 });
 
@@ -260,9 +166,41 @@ describe("wider intake", () => {
     );
     input.others.push(...strangers);
     input.others.push(chat("ada-old", "Ada", "About the refund", { last: NOW - 30 * 24 * HOUR }));
-    const worked = run(input);
-    const ids = worked.items.map((i) => i.id);
-    expect(ids).toContain("c:whatsapp_chats:ada-old");
-    expect(worked.items.filter((i) => i.kind === "conversation")).toHaveLength(MAX_CONVERSATIONS);
+    const picked = pick({ ...input, now: NOW });
+    expect(picked.items.map((i) => i.id)).toContain("c:whatsapp_chats:ada-old");
+    expect(picked.items.filter((i) => i.kind === "conversation")).toHaveLength(MAX_CONVERSATIONS);
+  });
+});
+
+describe("no embedding service is left", () => {
+  const files = [
+    ...readdirSync(ROOT).filter((f) => /\.(ts|js|json|html)$/.test(f) && f !== "bun.lock"),
+    ...readdirSync(join(ROOT, "panel")).map((f) => join("panel", f)),
+  ].filter((f) => f !== "package.json" && f !== "tsconfig.json" && f !== "biome.json");
+
+  test("no source file mentions DeepInfra, the vault or the models", () => {
+    expect(files.length).toBeGreaterThan(15);
+    for (const file of files) {
+      const text = readFileSync(join(ROOT, file), "utf8");
+      expect({ file, hit: /deepinfra|vault|gemma|openai/i.test(text) }).toEqual({
+        file,
+        hit: false,
+      });
+    }
+  });
+
+  test("the files that called it are gone", () => {
+    const names = readdirSync(ROOT);
+    for (const gone of ["embed.ts", "deepinfra.ts", "model.ts", "cluster.ts"])
+      expect(names).not.toContain(gone);
+  });
+
+  test("the manifest asks for the fast tier and no vault entry", () => {
+    const manifest = JSON.parse(readFileSync(join(ROOT, "prifly-extension.json"), "utf8"));
+    expect(manifest.vault).toBeUndefined();
+    expect(manifest.llm).toEqual({
+      tiers: ["fast"],
+      why: "Groups your sessions, chats, mails and cards into topics and names them.",
+    });
   });
 });

@@ -127,7 +127,7 @@ function drawFooter(answer) {
   const parts = [
     `${f.sessions} sessions, ${f.conversations} conversations, ${f.cards} cards`,
     f.model,
-  ];
+  ].filter(Boolean);
   if (f.skipped.length > 0) parts.push(`Not read: ${f.skipped.join(", ")}`);
   const footer = $("footer");
   footer.replaceChildren();
@@ -151,13 +151,7 @@ function say(text, error = false) {
 
 /** The page that stands in for the map while there has been no good one. */
 function showProblem(error) {
-  const chip =
-    error.kind === "http"
-      ? `HTTP ${error.status}`
-      : error.kind === "no-key"
-        ? "No key"
-        : "No answer";
-  $("problem-chip").textContent = `${chip} · ${error.call}`;
+  $("problem-chip").textContent = error.chip;
   $("problem-title").textContent = error.title;
   $("problem-text").textContent = error.text;
   $("problem").hidden = false;
@@ -196,8 +190,7 @@ async function refresh() {
     // Keep the last map on screen; say what went wrong over it only when there is none.
     if (target === null) {
       showProblem({
-        kind: "other",
-        call: "map",
+        chip: "No answer",
         title: "Could not read the map",
         text: error.message,
       });

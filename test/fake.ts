@@ -1,6 +1,7 @@
 /** A fake `api` and invented items for the tests: no real prifly data, no network. */
 
 import type { ExtensionApi, ExtensionStateApi } from "@prifly/extension-api";
+import type { Ask, LlmFailCode, LlmRequest } from "../llm";
 import type { FactSession, Item, ReadResult } from "../types";
 
 export function fakeState(): ExtensionStateApi & { docs: Map<string, unknown> } {
@@ -29,9 +30,56 @@ export function fakeState(): ExtensionStateApi & { docs: Map<string, unknown> } 
 export type FakeOptions = {
   sessions?: FactSession[];
   features?: string[];
-  key?: string | null;
+  /** The model call prifly lends; null or absent for a prifly without "llm-ask". Read at each use. */
+  ask?: Ask | null;
   read?: (name: string, args: Record<string, unknown>) => Promise<string>;
 };
+
+/** What the grouping prompt carries, as the tests read it. */
+export type Sent = {
+  items: { id: string; kind: string; title: string; repo: string; [field: string]: unknown }[];
+  sharedEntities: { a: string; b: string; label: string }[];
+  previousTopics: { id: string; name: string; sub: string; members: string[] }[];
+};
+
+export function sentIn(request: LlmRequest): Sent {
+  return JSON.parse(request.prompt) as Sent;
+}
+
+/** A well-formed answer: every item in the one topic `t1`, two lines each. */
+export function goodText(request: LlmRequest, name = "Shop work"): string {
+  return JSON.stringify({
+    topics: [{ id: "t1", name, sub: "named by the model" }],
+    items: sentIn(request).items.map((i) => ({
+      id: i.id,
+      topic: "t1",
+      lines: ["line one", "line two"],
+    })),
+    related: [],
+  });
+}
+
+/** A model that answers every call with `text(request, call number)`, counting the calls. */
+export function model(
+  text: (request: LlmRequest, call: number) => string = (request) => goodText(request),
+): { ask: Ask; calls: LlmRequest[] } {
+  const calls: LlmRequest[] = [];
+  const ask: Ask = async (request) => {
+    calls.push(request);
+    return {
+      ok: true,
+      text: text(request, calls.length),
+      model: "claude-haiku",
+      backend: "claude",
+    };
+  };
+  return { ask, calls };
+}
+
+/** A model that refuses every call. */
+export function refusing(code: LlmFailCode, reason: string): Ask {
+  return async () => ({ ok: false, code, reason });
+}
 
 export function fakeApi(
   options: FakeOptions = {},
@@ -54,8 +102,10 @@ export function fakeApi(
   const api = {
     logs,
     reads,
-    features: options.features ?? ["state"],
-    vault: { read: async (name: string) => (name === "deepinfra" ? (options.key ?? null) : null) },
+    get features() {
+      return options.features ?? ["state", ...(options.ask ? ["llm-ask"] : [])];
+    },
+    llm: { ask: (request: LlmRequest) => (options.ask ?? refusing("no-model", "none"))(request) },
     tools,
     state: fakeState(),
     sessions: () => options.sessions ?? [],

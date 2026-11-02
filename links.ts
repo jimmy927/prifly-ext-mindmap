@@ -2,7 +2,7 @@
  * The links between items: the solid ones prifly knows (a session started by
  * another, a session that waits on another, a card that is a session's
  * ticket) and the dashed "related" ones between items that share an entity or
- * that embeddings find very similar.
+ * that the model finds about the same thing.
  */
 
 import type { Item, Link, Sorting } from "./types";

@@ -1,40 +1,40 @@
 /**
  * The map's state between requests: the sessions (read at most every 15 s),
- * the sources, the embeddings, the topics and their names, and the last
- * layout — kept so circles do not jump and the layout is worked out again
- * only when what it shows changed.
+ * the sources, the model's grouping and naming, and the last layout — kept so
+ * circles do not jump and the layout is worked out again only when what it
+ * shows changed.
  *
- * Nothing is grouped or named without DeepInfra. A map is "good" only when the
- * embeddings and the names exist for the items now; the last good map is kept
- * in `api.state`. Until there is one, `view` answers with why there is none;
- * after one, a failing call leaves the last good map on screen with the error.
+ * Nothing is grouped or named without the model prifly lends (`api.llm`, the
+ * fast tier). A map is "good" only when the model's answer is for the items
+ * now; the last good map is kept in `api.state`. Until there is one, `view`
+ * answers with why there is none; after one, a failing call leaves the last
+ * good map on screen with the reason.
  *
  * Nothing runs on a timer: the page asks every few seconds while it is
- * visible, and each ask starts whatever is due in the background (DeepInfra
+ * visible, and each ask starts whatever is due in the background (the model
  * at most once a minute). A closed map reads nothing.
  */
 
 import { createHash } from "node:crypto";
 import type { ExtensionApi } from "@prifly/extension-api";
-import type { Failure } from "./deepinfra";
-import { deepInfraEmbed, type Embed, Embedder, embedText, textHash } from "./embed";
+import { type Answered, Grouper } from "./grouping";
 import type { Point } from "./layout";
 import { knownLinks, relatedLinks } from "./links";
-import { type Chat, deepInfraChat, Namer } from "./model";
+import { askOf, type Failure, modelLine } from "./llm";
 import { sessionItems } from "./sessions";
 import { Sources } from "./sources";
-import { type Worked, workOut } from "./topics";
+import { type Picked, pick, relatedOf } from "./topics";
 import { type FactSession, type Item, readToolOf, type Sorting } from "./types";
 import { buildView, type MapView } from "./view";
 
 export const SESSIONS_EVERY_MS = 15_000;
-const VAULT_NAMES = ["deepinfra", "deepinfra-api"];
-const TOPICS_STATE = "topics";
 const MAP_STATE = "map";
+/** What earlier versions kept, which nothing reads now. */
+const OLD_STATE = ["embeddings", "names", "topics"];
 const SAVE_MAP_EVERY_MS = 60_000;
 const HOUR = 3_600_000;
 
-export type MindMapDeps = { chat?: Chat; embed?: Embed; sources?: Sources };
+export type MindMapDeps = { sources?: Sources };
 
 /**
  * What `api/map` answers:
@@ -42,41 +42,21 @@ export type MindMapDeps = { chat?: Chat; embed?: Embed; sources?: Sources };
  *   because the data has moved on and no call has made a new one yet; `error`
  *   says why, when a call failed. `updatedAt` is when it was last good (epoch ms).
  * - "error": there has been no good map, and why.
- * - "waiting": no good map yet and nothing has failed; the first calls are on their way.
+ * - "waiting": no good map yet and nothing has failed; the first call is on its way.
  */
 export type MapAnswer =
   | { state: "map"; map: MapView; updatedAt: number; current: boolean; error: Failure | null }
   | { state: "error"; error: Failure }
   | { state: "waiting" };
 
-/** The DeepInfra key from the vault: the entry "deepinfra", else "deepinfra-api". */
-async function vaultKey(api: ExtensionApi): Promise<string | null> {
-  for (const name of VAULT_NAMES) {
-    const key = await api.vault?.read(name).catch(() => null);
-    if (typeof key === "string" && key.trim() !== "") return key.trim();
-  }
-  return null;
-}
-
-function shortModel(model: string): string {
-  return model.split("/").at(-1) ?? model;
-}
-
-/** `embedModel`: the embedding model the topics were built with; absent when built without embeddings. */
-type SavedTopics = { topicOf: Record<string, string>; nextId: number; embedModel?: string };
 type SavedMap = { view: MapView; at: number };
 
 export class MindMap {
   private sessions: Item[] = [];
   private sessionsAt = Number.NEGATIVE_INFINITY;
   readonly sources: Sources;
-  readonly embedder: Embedder;
-  readonly namer: Namer;
-  private seeds = new Map<string, string>();
-  /** The embedding model the seeds were built with; null for none (an older save), which no model matches. */
-  private seedsModel: string | null = null;
-  private nextId = 1;
-  private worked: { key: string; worked: Worked } | null = null;
+  readonly grouper: Grouper;
+  private picked: { key: string; picked: Picked } | null = null;
   private positions = new Map<string, Point>();
   private themes = new Map<string, string>();
   private order: string[] = [];
@@ -93,25 +73,17 @@ export class MindMap {
   constructor(api: ExtensionApi, deps: MindMapDeps = {}) {
     this.api = api;
     this.sources = deps.sources ?? new Sources(readToolOf(api));
-    const common = {
-      key: () => vaultKey(api),
+    this.grouper = new Grouper({
+      ask: () => askOf(api),
       state: api.state,
-      log: (event: string, fields: Record<string, string | number | boolean | null>) =>
-        api.log(event, fields),
-    };
-    this.embedder = new Embedder({ ...common, embed: deps.embed ?? deepInfraEmbed });
-    this.namer = new Namer({ ...common, chat: deps.chat ?? deepInfraChat });
+      log: (event, fields) => api.log(event, fields),
+    });
   }
 
   async load(): Promise<void> {
-    await Promise.all([this.embedder.load(), this.namer.load()]);
     const state = this.api.state;
-    const saved = await state?.get<SavedTopics>(TOPICS_STATE).catch(() => undefined);
-    if (saved?.topicOf !== undefined && typeof saved.nextId === "number") {
-      this.seeds = new Map(Object.entries(saved.topicOf));
-      this.nextId = saved.nextId;
-      this.seedsModel = typeof saved.embedModel === "string" ? saved.embedModel : null;
-    }
+    await this.grouper.load();
+    for (const name of OLD_STATE) void state?.delete(name).catch(() => undefined);
     const map = await state?.get<SavedMap>(MAP_STATE).catch(() => undefined);
     if (map !== undefined && Array.isArray(map.view?.nodes) && typeof map.at === "number") {
       this.good = map;
@@ -128,47 +100,34 @@ export class MindMap {
     this.sessions = sessionItems(this.api.sessions() as FactSession[], now);
   }
 
-  /** Every item there is: sessions, and every conversation and card the listings gave. */
-  private pool(): Item[] {
-    return [...this.sessions, ...this.sources.items()];
-  }
-
-  /** The topics, worked out again only when the items, their texts or the vectors changed. */
-  private work(now: number): Worked {
-    const pool = this.pool();
+  /** The items drawn and the hints that go with them, worked out again only when the items, their texts or the hour changed. */
+  private pick(now: number): Picked {
+    const others = this.sources.items();
     const key = createHash("sha1")
       .update(
         JSON.stringify([
-          pool.map((item) => [item.id, textHash(embedText(item)), item.last ?? 0, item.repo]),
-          this.embedder.version,
+          [...this.sessions, ...others].map((item) => [
+            item.id,
+            item.title,
+            item.brief,
+            item.name,
+            item.subject,
+            item.head,
+            item.last ?? 0,
+            item.repo,
+            item.status,
+          ]),
           Math.floor(now / HOUR),
         ]),
       )
       .digest("hex");
-    if (this.worked?.key === key) return this.worked.worked;
-    const worked = workOut({
-      sessions: this.sessions,
-      others: this.sources.items(),
-      vectorOf: (item) => this.embedder.vectorOf(item),
-      // Topics built without these embeddings are not sticky: a fresh run, with new topic ids.
-      previous: this.seedsModel === this.embedder.model ? this.seeds : new Map(),
-      nextId: this.nextId,
-      now,
-    });
-    this.worked = { key, worked };
-    this.seeds = worked.topicOf;
-    this.seedsModel = this.embedder.model;
-    this.nextId = worked.nextId;
-    const saved: SavedTopics = {
-      topicOf: Object.fromEntries(worked.topicOf),
-      nextId: this.nextId,
-      embedModel: this.embedder.model,
-    };
-    void this.api.state?.set(TOPICS_STATE, saved).catch(() => undefined);
-    return worked;
+    if (this.picked?.key === key) return this.picked.picked;
+    const picked = pick({ sessions: this.sessions, others, now });
+    this.picked = { key, picked };
+    return picked;
   }
 
-  /** What `api/map` answers now; starts the reads, the embedding and the naming that are due. */
+  /** What `api/map` answers now; starts the reads and the call that are due. */
   view(now: number): MapAnswer {
     this.readSessions(now);
     this.pending = this.refresh(now);
@@ -177,22 +136,17 @@ export class MindMap {
       this.keep(map, now);
       return { state: "map", map, updatedAt: now, current: true, error: null };
     }
-    const error = this.embedder.error() ?? this.namer.error();
+    const error = this.grouper.error();
     if (this.good !== null)
       return { state: "map", map: this.good.view, updatedAt: this.good.at, current: false, error };
     return error === null ? { state: "waiting" } : { state: "error", error };
   }
 
-  /** The reads, then the embedding, then (only with every vector) the naming. */
+  /** The reads, then (when the items changed) the model's call. */
   private refresh(now: number): Promise<void> {
     return this.sources
       .refresh(now)
-      .then(() => this.embedder.update(this.pool(), now))
-      .then(() => {
-        if (!this.embedder.complete(this.pool())) return;
-        const fresh = this.work(now);
-        return this.namer.update(fresh.topics, fresh.entities, now);
-      })
+      .then(() => this.grouper.update(this.pick(now), now))
       .catch((error: unknown) => {
         this.api.log("refresh_failed", {
           error: error instanceof Error ? error.message : String(error),
@@ -200,17 +154,16 @@ export class MindMap {
       });
   }
 
-  /** Wait for the reads and the calls the last `view` started (for tests). */
+  /** Wait for the reads and the call the last `view` started (for tests). */
   settle(): Promise<void> {
     return this.pending;
   }
 
-  /** The map for the items now, or null while any embedding or name is missing. */
+  /** The map for the items now, or null while the model has not grouped them. */
   private currentMap(now: number): MapView | null {
-    if (!this.embedder.complete(this.pool())) return null;
-    const worked = this.work(now);
-    if (!this.namer.ready(worked.topics)) return null;
-    return this.render(worked.items, this.sortingOf(worked));
+    const picked = this.pick(now);
+    const answered = this.grouper.answerFor(picked.items);
+    return answered === null ? null : this.render(picked, answered);
   }
 
   /** Remember a good map as the last one; in `api.state` when it changed, else at most once a minute. */
@@ -222,16 +175,12 @@ export class MindMap {
     void this.api.state?.set(MAP_STATE, this.good).catch(() => undefined);
   }
 
-  private sortingOf(worked: Worked): Sorting {
+  private sortingOf(picked: Picked, answered: Answered): Sorting {
     return {
-      themes: worked.topics.flatMap((topic) => this.namer.themeOf(topic) ?? []),
-      themeOf: Object.fromEntries(worked.topicOf),
-      lines: Object.fromEntries(worked.items.map((item) => [item.id, this.namer.linesOf(item)])),
-      related: worked.related.map(({ a, b, label }) => ({
-        a,
-        b,
-        label: label ?? this.namer.labelOf(a, b) ?? "similar",
-      })),
+      themes: answered.topics,
+      themeOf: answered.topicOf,
+      lines: answered.lines,
+      related: relatedOf(picked, answered.related),
     };
   }
 
@@ -245,11 +194,13 @@ export class MindMap {
     );
   }
 
-  private render(items: Item[], sorting: Sorting): MapView {
+  private render(picked: Picked, answered: Answered): MapView {
+    const items = picked.items;
+    const sorting = this.sortingOf(picked, answered);
     const known = knownLinks(items);
     const links = [...known, ...relatedLinks(items, sorting, known)];
     const footer = {
-      model: `Names by ${shortModel(this.namer.model)} · similarity by ${shortModel(this.embedder.model)}`,
+      model: answered.model === "" ? "" : modelLine(answered.model, answered.backend),
       skipped: this.sources.skipped(),
       sessions: items.filter((item) => item.kind === "session").length,
       conversations: items.filter((item) => item.kind === "conversation").length,

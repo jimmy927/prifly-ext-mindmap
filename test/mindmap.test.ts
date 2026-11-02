@@ -1,10 +1,8 @@
 import { expect, test } from "bun:test";
-import { DeepInfraError, NO_KEY_TEXT } from "../deepinfra";
-import type { Embed } from "../embed";
-import { type MapAnswer, MindMap, type MindMapDeps, SESSIONS_EVERY_MS } from "../mindmap";
-import type { Chat } from "../model";
+import { type Ask, type LlmFailCode, UNSUPPORTED_TEXT } from "../llm";
+import { type MapAnswer, MindMap, SESSIONS_EVERY_MS } from "../mindmap";
 import type { FactSession } from "../types";
-import { type FakeOptions, fakeApi, session } from "./fake";
+import { type FakeOptions, fakeApi, model, refusing, session } from "./fake";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
 const MINUTE = 60_000;
@@ -28,27 +26,7 @@ function sessions(): FactSession[] {
   ];
 }
 
-/** DeepInfra as it answers when well: every text a vector, every topic a name. */
-function working(): { embed: Embed; chat: Chat; calls: { embed: number; chat: number } } {
-  const calls = { embed: 0, chat: 0 };
-  const embed: Embed = async (_key, _model, texts) => {
-    calls.embed += 1;
-    return texts.map(() => [1, 0, 0]);
-  };
-  const chat: Chat = async (_key, _model, messages) => {
-    calls.chat += 1;
-    const payload = JSON.parse(messages[1]?.content ?? "{}") as { items: { id: string }[] };
-    return JSON.stringify({
-      name: "Named topic",
-      sub: "named by the model",
-      items: payload.items.map((i) => ({ id: i.id, lines: ["line one", "line two"] })),
-      pairs: [],
-    });
-  };
-  return { embed, chat, calls };
-}
-
-/** The first view starts the calls; once they are done, the next one answers. */
+/** The first view starts the call; once it is done, the next one answers. */
 async function settled(map: MindMap, now: number): Promise<MapAnswer> {
   map.view(now);
   await map.settle();
@@ -65,21 +43,23 @@ function failure(answer: MapAnswer) {
   return answer.error;
 }
 
-function setup(options: FakeOptions = {}, deps: MindMapDeps = working()) {
-  const given = { sessions: sessions(), key: "k", ...options };
+function setup(options: FakeOptions = {}, ask: Ask = model().ask) {
+  const given = { sessions: sessions(), ask, ...options };
   const api = fakeApi(given);
-  return { api, options: given, map: new MindMap(api, deps) };
+  return { api, options: given, map: new MindMap(api) };
 }
 
 /** A restart: a new map on the same `api.state`, after the saves have landed. */
-async function restarted(api: ReturnType<typeof fakeApi>, deps: MindMapDeps) {
+async function restarted(api: ReturnType<typeof fakeApi>) {
   await new Promise((done) => setTimeout(done, 0));
-  const map = new MindMap(api, deps);
+  const map = new MindMap(api);
   await map.load();
   return map;
 }
 
-test("sessions only: leftovers dropped, every theme and summary line from the model", async () => {
+const CODES: LlmFailCode[] = ["no-model", "not-allowed", "capped", "failed"];
+
+test("sessions only: leftovers dropped, topic and summary lines from the model, the footer names the model", async () => {
   const { api, map } = setup();
   const answer = goodMap(await settled(map, NOW));
   const view = answer.map;
@@ -90,14 +70,14 @@ test("sessions only: leftovers dropped, every theme and summary line from the mo
     "Refund bug",
     "Tax report",
   ]);
-  expect(view.themes.map((t) => t.name)).toEqual(["Named topic"]);
+  expect(view.themes.map((t) => t.name)).toEqual(["Shop work"]);
   expect(view.nodes.every((n) => n.lines.join("|") === "line one|line two")).toBe(true);
   expect(view.nodes.find((n) => n.title === "Refund bug")?.status).toBe("waiting");
-  // No solid links without session facts; the dashed ones are pairs only the embeddings tie.
-  expect(view.links.every((link) => link.kind === "related")).toBe(true);
+  // No solid links without session facts, and no entity shared by two sessions.
+  expect(view.links).toEqual([]);
   expect(api.reads).toEqual([]);
   expect(view.footer.skipped).toEqual([]);
-  expect(view.footer.model).toBe("Names by gemma-4-26B-A4B-it · similarity by embeddinggemma-300m");
+  expect(view.footer.model).toBe("Topics by claude-haiku via Claude");
 });
 
 test("an archived session is left out and does not count towards the cap; an unarchived one stays", async () => {
@@ -120,7 +100,7 @@ test("an archived session is left out and does not count towards the cap; an una
   expect(await titles([...many, session({ ...shape, title: "Last kept" })])).toEqual(["Last kept"]);
 });
 
-test("a new session shows once it has its embedding and name, not at the next read of sessions", async () => {
+test("a new session shows once the model has grouped it, not at the next read of sessions", async () => {
   const { options, map } = setup();
   goodMap(await settled(map, NOW));
   options.sessions.push(
@@ -128,7 +108,7 @@ test("a new session shows once it has its embedding and name, not at the next re
   );
   const has = (answer: MapAnswer) => goodMap(answer).map.nodes.some((n) => n.title === "Brand new");
   expect(has(map.view(NOW + 2000))).toBe(false);
-  // Read within 15 s, but DeepInfra is asked only once a minute: the last good map stays.
+  // Read within 15 s, but the model is asked only once a minute: the last good map stays.
   const waiting = goodMap(map.view(NOW + SESSIONS_EVERY_MS));
   expect(has(waiting)).toBe(false);
   expect(waiting.current).toBe(false);
@@ -138,7 +118,7 @@ test("a new session shows once it has its embedding and name, not at the next re
 
 test("with read tools: a conversation joins, a failing source is named in the footer", async () => {
   const { map } = setup({
-    features: ["state", "read-tools"],
+    features: ["state", "read-tools", "llm-ask"],
     read: async (name) => {
       if (name === "whatsapp_chats")
         return "- **Ada** `a1` · 2026-11-02 11:00 UTC\n  About the refund";
@@ -152,239 +132,138 @@ test("with read tools: a conversation joins, a failing source is named in the fo
   expect(view.legend.services.map((s) => s.name)).toEqual(["WhatsApp"]);
 });
 
-test("the model names each topic in one short call; the same view twice keeps every position", async () => {
-  const deps = working();
-  const { map } = setup({}, deps);
+test("one call groups and names everything; the same view twice keeps every position and asks nothing", async () => {
+  const fake = model();
+  const { map } = setup({}, fake.ask);
   const one = goodMap(await settled(map, NOW)).map;
-  expect(deps.calls.chat).toBe(one.themes.length);
-  expect(deps.calls.embed).toBe(1);
+  expect(fake.calls).toHaveLength(1);
+  expect(fake.calls[0]).toMatchObject({ tier: "fast" });
+  expect(fake.calls[0]?.schema).toBeDefined();
   const two = goodMap(map.view(NOW + 3000)).map;
   expect(two.nodes).toEqual(one.nodes);
-});
-
-test("first load with no key: an error state naming the missing key, and nothing is grouped or called", async () => {
-  const deps = working();
-  const { map } = setup({ key: null }, deps);
-  expect(map.view(NOW)).toEqual({ state: "waiting" });
   await map.settle();
-  const answer = map.view(NOW + 1000);
+  expect(fake.calls).toHaveLength(1);
+});
+
+test("an unchanged map is not asked about again, even after a minute", async () => {
+  const fake = model();
+  const { map } = setup({}, fake.ask);
+  goodMap(await settled(map, NOW));
+  goodMap(await settled(map, NOW + 5 * MINUTE));
+  expect(fake.calls).toHaveLength(1);
+});
+
+test("feature absent: the error page says to update prifly, and nothing is asked", async () => {
+  const fake = model();
+  const { map } = setup({ features: ["state"], ask: fake.ask });
+  const answer = map.view(NOW);
   expect(answer.state).toBe("error");
-  expect(failure(answer)).toMatchObject({ call: "embedding", kind: "no-key", text: NO_KEY_TEXT });
-  expect(NO_KEY_TEXT).toContain("an api-token entry named deepinfra or deepinfra-api, at level 1");
-  expect(deps.calls).toEqual({ embed: 0, chat: 0 });
+  expect(failure(answer)).toMatchObject({ code: "unsupported", text: UNSUPPORTED_TEXT });
+  expect(UNSUPPORTED_TEXT).toBe("This prifly cannot lend the map a model yet: update prifly.");
+  await map.settle();
+  expect(fake.calls).toHaveLength(0);
 });
 
-test("first load with no key: the extension tries again once a minute, and the map appears when the key does", async () => {
-  const deps = working();
-  const { options, map } = setup({ key: null }, deps);
-  failure(await settled(map, NOW));
-  options.key = "k";
-  // Not before the minute is up.
-  failure(await settled(map, NOW + MINUTE - 2000));
-  expect(deps.calls).toEqual({ embed: 0, chat: 0 });
-  const answer = goodMap(await settled(map, NOW + MINUTE));
-  expect(answer.current).toBe(true);
-  expect(answer.map.nodes).toHaveLength(3);
-});
-
-test("first load with a failing embedding call: an error state with DeepInfra's status, and no naming", async () => {
-  const deps = working();
-  const embed: Embed = async () => {
-    throw new DeepInfraError(401, "Invalid API key");
-  };
-  const { map } = setup({}, { ...deps, embed });
-  const answer = await settled(map, NOW);
-  expect(answer.state).toBe("error");
-  expect(failure(answer)).toMatchObject({
-    call: "embedding",
-    kind: "http",
-    status: 401,
-    title: "DeepInfra answered 401",
-    text: "DeepInfra answered 401 to the embedding call: Invalid API key",
-  });
-  expect(deps.calls.chat).toBe(0);
-});
-
-test("first load with a failing naming call: an error state with DeepInfra's status", async () => {
-  const deps = working();
-  const chat: Chat = async () => {
-    throw new DeepInfraError(429, "Rate limit reached");
-  };
-  const { map } = setup({}, { ...deps, chat });
-  const answer = await settled(map, NOW);
-  expect(answer.state).toBe("error");
-  expect(failure(answer)).toMatchObject({
-    call: "naming",
-    kind: "http",
-    status: 429,
-    text: "DeepInfra answered 429 to the naming call: Rate limit reached",
-  });
-});
-
-test("a failure with no HTTP status (a timeout) is an error state too, in the call's own words", async () => {
-  const embed: Embed = async () => {
-    throw new Error("The operation timed out.");
-  };
-  const { map } = setup({}, { ...working(), embed });
-  expect(failure(await settled(map, NOW))).toMatchObject({
-    kind: "other",
-    status: null,
-    text: "The embedding call to DeepInfra failed: The operation timed out.",
-  });
-});
-
-test("after a good map, a failing embedding call keeps the last good map, the error and its time; a later success makes a new map", async () => {
-  const deps = working();
-  let down: DeepInfraError | null = null;
-  const embed: Embed = async (key, model, texts) => {
-    if (down !== null) throw down;
-    return deps.embed(key, model, texts);
-  };
-  const { options, map } = setup({}, { ...deps, embed });
+test("feature absent after a good map: the last good map stays with the message in the footer", async () => {
+  const { options, map } = setup();
   const before = goodMap(await settled(map, NOW));
-  expect(before.updatedAt).toBe(NOW + 1000);
-
-  down = new DeepInfraError(503, "Service unavailable");
-  options.sessions.push(session({ title: "Brand new", cwd: "/home/ada/src/books" }));
-  map.view(NOW + 20_000); // reads the new session
-  const kept = goodMap(await settled(map, NOW + MINUTE));
-  expect(kept.current).toBe(false);
-  expect(kept.map).toEqual(before.map);
-  expect(kept.updatedAt).toBe(NOW + 1000);
-  expect(kept.error).toMatchObject({ call: "embedding", status: 503 });
-
-  // Still failing a minute later: still the same map.
-  const again = goodMap(await settled(map, NOW + 2 * MINUTE));
-  expect(again.map).toEqual(before.map);
-  expect(again.error?.status).toBe(503);
-
-  down = null;
-  const recovered = goodMap(await settled(map, NOW + 3 * MINUTE));
-  expect(recovered.current).toBe(true);
-  expect(recovered.error).toBeNull();
-  expect(recovered.updatedAt).toBe(NOW + 3 * MINUTE + 1000);
-  expect(recovered.map.nodes.map((n) => n.title)).toContain("Brand new");
-});
-
-test("after a good map, a failing naming call keeps the last good map; the next good call replaces it", async () => {
-  const deps = working();
-  let down = false;
-  const chat: Chat = async (key, model, messages) => {
-    if (down) throw new DeepInfraError(500, "Internal error");
-    return deps.chat(key, model, messages);
-  };
-  const { options, map } = setup({}, { ...deps, chat });
-  const before = goodMap(await settled(map, NOW));
-
-  down = true;
+  options.features = ["state"];
   options.sessions.push(session({ title: "Brand new", cwd: "/home/ada/src/books" }));
   map.view(NOW + 20_000);
   const kept = goodMap(await settled(map, NOW + MINUTE));
   expect(kept.current).toBe(false);
   expect(kept.map).toEqual(before.map);
-  expect(kept.error).toMatchObject({ call: "naming", status: 500 });
-
-  down = false;
-  const recovered = goodMap(await settled(map, NOW + 2 * MINUTE));
-  expect(recovered.current).toBe(true);
-  expect(recovered.error).toBeNull();
-  expect(recovered.map.nodes.map((n) => n.title)).toContain("Brand new");
+  expect(kept.error?.text).toBe(UNSUPPORTED_TEXT);
 });
 
-test("a restart shows the last good map with its time, and the error when the key has gone", async () => {
-  const deps = working();
-  const { api, options, map } = setup({}, deps);
+for (const code of CODES) {
+  test(`first load, answer ${code}: an error state with prifly's reason, nothing grouped`, async () => {
+    const reason = `The reason for ${code}.`;
+    const { map } = setup({ ask: refusing(code, reason) });
+    expect(map.view(NOW)).toEqual({ state: "waiting" });
+    await map.settle();
+    const answer = map.view(NOW + 1000);
+    expect(answer.state).toBe("error");
+    expect(failure(answer)).toMatchObject({ code, text: reason });
+  });
+
+  test(`after a good map, answer ${code}: the last good map, the reason and its time; a later success makes a new map`, async () => {
+    let down: Ask | null = null;
+    const fake = model();
+    const ask: Ask = (request) => (down ?? fake.ask)(request);
+    const { options, map } = setup({}, ask);
+    const before = goodMap(await settled(map, NOW));
+    expect(before.updatedAt).toBe(NOW + 1000);
+
+    down = refusing(code, `Down: ${code}.`);
+    options.sessions.push(session({ title: "Brand new", cwd: "/home/ada/src/books" }));
+    map.view(NOW + 20_000); // reads the new session
+    const kept = goodMap(await settled(map, NOW + MINUTE));
+    expect(kept.current).toBe(false);
+    expect(kept.map).toEqual(before.map);
+    expect(kept.updatedAt).toBe(NOW + 1000);
+    expect(kept.error).toMatchObject({ code, text: `Down: ${code}.` });
+
+    down = null;
+    const recovered = goodMap(await settled(map, NOW + 2 * MINUTE));
+    expect(recovered.current).toBe(true);
+    expect(recovered.error).toBeNull();
+    expect(recovered.map.nodes.map((n) => n.title)).toContain("Brand new");
+  });
+}
+
+test("first load refused: asked again once a minute, and the map appears when the model does", async () => {
+  let down = true;
+  const fake = model();
+  let calls = 0;
+  const ask: Ask = async (request) => {
+    calls += 1;
+    return down ? { ok: false, code: "no-model", reason: "No model is set." } : fake.ask(request);
+  };
+  const { map } = setup({}, ask);
+  failure(await settled(map, NOW));
+  down = false;
+  // Not before the minute is up.
+  failure(await settled(map, NOW + MINUTE - 2000));
+  expect(calls).toBe(1);
+  const answer = goodMap(await settled(map, NOW + MINUTE));
+  expect(answer.current).toBe(true);
+  expect(answer.map.nodes).toHaveLength(3);
+});
+
+test("a call that throws is a failed answer, not a crash", async () => {
+  const ask: Ask = async () => {
+    throw new Error("socket closed");
+  };
+  const { map } = setup({}, ask);
+  expect(failure(await settled(map, NOW))).toMatchObject({ code: "failed" });
+});
+
+test("a restart shows the last good map with its time, and asks nothing for the same items", async () => {
+  const fake = model();
+  const { api, map } = setup({}, fake.ask);
   const before = goodMap(await settled(map, NOW));
 
-  options.key = null;
+  const next = await restarted(api);
+  const shown = goodMap(next.view(NOW + 5 * MINUTE));
+  const places = (nodes: { id: string; theme: string; lines: string[] }[]) =>
+    nodes.map(({ id, theme, lines }) => ({ id, theme, lines }));
+  expect(places(shown.map.nodes)).toEqual(places(before.map.nodes));
+  expect(shown.current).toBe(true);
+  await next.settle();
+  expect(fake.calls).toHaveLength(1);
+});
+
+test("a restart with the model gone shows the last good map and why", async () => {
+  const { api, options, map } = setup();
+  const before = goodMap(await settled(map, NOW));
+
+  options.features = ["state"];
   options.sessions.push(session({ title: "Brand new", cwd: "/home/ada/src/books" }));
-  const next = await restarted(api, deps);
+  const next = await restarted(api);
   const shown = goodMap(next.view(NOW + 5 * MINUTE));
   expect(shown.current).toBe(false);
   expect(shown.updatedAt).toBe(before.updatedAt);
-  expect(shown.map.nodes).toEqual(before.map.nodes);
   expect(shown.map.themes).toEqual(before.map.themes);
-  await next.settle();
-  expect(goodMap(next.view(NOW + 5 * MINUTE + 1000)).error).toMatchObject({
-    kind: "no-key",
-    text: NO_KEY_TEXT,
-  });
-});
-
-const EMBED_MODEL = "google/embeddinggemma-300m";
-
-/** Two groups of sessions the embeddings tell apart: "alpha" ones along x, "beta" ones along y. */
-function twoGroups(): { options: FakeOptions; ids: Record<string, string>; deps: MindMapDeps } {
-  const shop = "/home/ada/src/shop";
-  const books = "/home/ada/src/books";
-  const made = [
-    session({ title: "alpha 1", cwd: shop, state: "idle" }),
-    session({ title: "alpha 2", cwd: shop, state: "idle" }),
-    session({ title: "alpha 3", cwd: shop, state: "idle" }),
-    session({ title: "beta 1", cwd: books, state: "idle" }),
-    session({ title: "beta 2", cwd: books, state: "idle" }),
-    session({ title: "beta 3", cwd: books, state: "idle" }),
-  ];
-  const ids = Object.fromEntries(made.map((s) => [s.title, s.id]));
-  const embed: Embed = async (_key, _model, texts) =>
-    texts.map((text) => (text.includes("alpha") ? [1, 0, 0] : [0, 1, 0]));
-  let named = 0;
-  const chat: Chat = async (_key, _model, messages) => {
-    const payload = JSON.parse(messages[1]?.content ?? "{}") as { items: { id: string }[] };
-    named += 1;
-    return JSON.stringify({
-      name: `Subject${String.fromCharCode(96 + named)}`,
-      sub: "named by the model",
-      items: payload.items.map((i) => ({ id: i.id, lines: ["line one", "line two"] })),
-      pairs: [],
-    });
-  };
-  return { options: { sessions: made }, ids, deps: { embed, chat } };
-}
-
-/** Last time's topics: beta 3 sat with the alpha sessions. */
-function oldTopics(ids: Record<string, string>) {
-  const topicOf = Object.fromEntries(
-    Object.entries(ids).map(([title, id]) => [
-      id,
-      title.startsWith("beta") && title !== "beta 3" ? "t2" : "t1",
-    ]),
-  );
-  return { topicOf, nextId: 3 };
-}
-
-function themeOf(view: MapAnswer, id: string | undefined): string | undefined {
-  return goodMap(view).map.nodes.find((n) => n.id === id)?.theme;
-}
-
-async function mapWith(saved: object) {
-  const { options, ids, deps } = twoGroups();
-  const api = fakeApi({ ...options, key: "k" });
-  await api.state?.set("topics", { ...oldTopics(ids), ...saved });
-  const map = new MindMap(api, deps);
-  await map.load();
-  return { api, ids, view: await settled(map, NOW) };
-}
-
-test("topics saved without embeddings are not sticky: a fresh run moves an item to where its embedding fits, with new ids", async () => {
-  const { api, ids, view } = await mapWith({});
-  expect(themeOf(view, ids["beta 3"])).toBe(themeOf(view, ids["beta 1"]));
-  expect(themeOf(view, ids["beta 3"])).not.toBe(themeOf(view, ids["alpha 1"]));
-  expect(goodMap(view).map.themes.some((t) => t.id === "t1" || t.id === "t2")).toBe(false);
-  // Saved with the model, so the next run is sticky.
-  await new Promise((done) => setTimeout(done, 0));
-  expect(await api.state?.get("topics")).toMatchObject({ embedModel: EMBED_MODEL });
-});
-
-test("topics saved with this embedding model are sticky, as before: the ids are kept", async () => {
-  const { ids, view } = await mapWith({ embedModel: EMBED_MODEL });
-  expect(goodMap(view).map.themes.every((t) => t.id === "t1" || t.id === "t2")).toBe(true);
-  expect(themeOf(view, ids["alpha 1"])).toBe("t1");
-  expect(themeOf(view, ids["beta 1"])).toBe("t2");
-});
-
-test("topics saved with another embedding model are rebuilt too", async () => {
-  const { ids, view } = await mapWith({ embedModel: "some/older-model" });
-  expect(themeOf(view, ids["beta 3"])).toBe(themeOf(view, ids["beta 1"]));
-  expect(goodMap(view).map.themes.some((t) => t.id === "t1" || t.id === "t2")).toBe(false);
+  expect(shown.error?.text).toBe(UNSUPPORTED_TEXT);
 });

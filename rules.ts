@@ -2,10 +2,10 @@
  * What a good naming is, checked in code after the answer is parsed: a theme
  * name that is no catch-all and shares no main word with another theme's
  * name, and summary lines that say more than their item's title. A bad part
- * is sent back once with its reason (see `model.ts`).
+ * is sent back once with its reason (see `grouping.ts`).
  */
 
-import type { Naming } from "./sorting";
+import type { Grouping } from "./sorting";
 import type { Item } from "./types";
 
 /** Lower case, no accents, letters and digits only, single spaces: for comparing words, not for showing. */
@@ -109,24 +109,34 @@ export function lineProblem(line: string, title: string): string | null {
 }
 
 export type Review = {
-  name: NameProblem | null;
+  /** The topics whose name is no good, by topic id. */
+  names: Map<string, NameProblem>;
   /** The lines that passed, by item id. */
   lines: Map<string, string[]>;
   /** Why the others did not. */
   lineProblems: string[];
 };
 
-/** A naming checked: the name (when `checkName`) and each member's lines. */
+/**
+ * A grouping checked: each topic's name beside the others' (except the
+ * `fixed` topics, which keep an earlier name) and each item's lines.
+ */
 export function review(
-  naming: Naming,
-  members: readonly Item[],
-  others: readonly string[],
-  checkName: boolean,
+  grouping: Grouping,
+  items: readonly Item[],
+  fixed: ReadonlySet<string>,
 ): Review {
-  const titles = new Map(members.map((m) => [m.id, m.title]));
+  const names = new Map<string, NameProblem>();
+  for (const topic of grouping.topics) {
+    if (fixed.has(topic.id)) continue;
+    const others = grouping.topics.filter((t) => t.id !== topic.id).map((t) => t.name);
+    const problem = nameProblem(topic.name, others);
+    if (problem !== null) names.set(topic.id, problem);
+  }
+  const titles = new Map(items.map((item) => [item.id, item.title]));
   const lines = new Map<string, string[]>();
   const lineProblems: string[] = [];
-  for (const [id, given] of naming.lines) {
+  for (const [id, given] of grouping.lines) {
     const title = titles.get(id) ?? "";
     const good: string[] = [];
     for (const line of given) {
@@ -136,10 +146,15 @@ export function review(
     }
     lines.set(id, good);
   }
-  return { name: checkName ? nameProblem(naming.name, others) : null, lines, lineProblems };
+  return { names, lines, lineProblems };
 }
+
+const MAX_REASONS = 12;
 
 /** Every reason a review found, for the retry message. */
 export function reasons(checked: Review): string[] {
-  return [...(checked.name === null ? [] : [checked.name.text]), ...checked.lineProblems];
+  const all = [...[...checked.names.values()].map((p) => p.text), ...checked.lineProblems];
+  return all.length <= MAX_REASONS
+    ? all
+    : [...all.slice(0, MAX_REASONS), `and ${all.length - MAX_REASONS} more like these`];
 }
