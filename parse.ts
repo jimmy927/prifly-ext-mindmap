@@ -14,6 +14,8 @@ export type Entry = {
   /** Epoch ms of the last message. */
   last?: number;
   url?: string;
+  /** A mail sender's address, lower case. */
+  address?: string;
   /** For a card: the session it is the ticket of. */
   sessionId?: string;
 };
@@ -45,11 +47,17 @@ export function timeOf(value: unknown): number | undefined {
 
 /** "Ada Lovelace <ada@example.com>" → "Ada Lovelace". */
 export function personOf(from: string): string {
+  // A cut-off address ("Ada <ada@exa") has no closing bracket: drop it all the same.
   const name = from
-    .replace(/<[^>]*>/, "")
+    .replace(/<[^>]*(?:>|$)/, "")
     .replace(/"/g, "")
     .trim();
   return name === "" ? from.replace(/[<>]/g, "").trim() : name;
+}
+
+/** "Ada Lovelace <Ada@Example.com>" → "ada@example.com"; undefined when it holds no address. */
+export function addressOf(from: string): string | undefined {
+  return from.match(/[\w.+-]+@[\w-]+(?:\.[\w-]+)+/)?.[0]?.toLowerCase();
 }
 
 type Json = Record<string, unknown>;
@@ -123,6 +131,8 @@ function entryOfJson(value: unknown, index: number): Entry | null {
       ) ?? `#${index}`,
     name: cut(name, 80),
   };
+  const address = from === undefined ? undefined : addressOf(from);
+  if (address !== undefined) entry.address = address;
   return withJsonExtras(entry, record, lastMessage);
 }
 
@@ -251,6 +261,8 @@ function entryOfRow(row: string[], columns: string[], index: number): Entry | nu
     key: at("id") ?? at("thread_id") ?? `#${index}`,
     name: cut(personOf(from), 80),
   };
+  const address = addressOf(from);
+  if (address !== undefined) entry.address = address;
   const subject = at("subject");
   if (subject !== undefined) entry.subject = cut(subject, 120);
   const last = timeOf(at("date") ?? at("time"));

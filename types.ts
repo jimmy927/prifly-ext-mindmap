@@ -92,6 +92,8 @@ export type Item = {
   head?: string;
   /** When its last message was, epoch ms. */
   last?: number;
+  /** A mail sender's address, lower case. */
+  address?: string;
   /** What a click opens: a card's or a conversation's link. */
   url?: string;
   /** The session a card is the ticket of. */
@@ -111,7 +113,7 @@ export type Sorting = {
   /** Item id → two short summary lines. */
   lines: Record<string, string[]>;
   related: { a: string; b: string; label: string }[];
-  /** "model <name>" or "fallback". */
+  /** "model <name>" when the model named the topics, else "entities". */
   by: string;
 };
 

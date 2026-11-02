@@ -17,7 +17,7 @@ export const MAX_CARDS = 15;
 
 export type Source = {
   tool: string;
-  /** The service's name, which the fallback themes by. */
+  /** The service's name, for the circle's ring and the legend; never what themes are made by. */
   service: string;
   kind: "conversation" | "card";
   everyMs: number;
@@ -103,6 +103,7 @@ function itemOf(source: Source, entry: Entry): Item {
   if (entry.head !== undefined) item.head = entry.head;
   if (entry.last !== undefined) item.last = entry.last;
   if (entry.url !== undefined) item.url = entry.url;
+  if (entry.address !== undefined) item.address = entry.address;
   if (entry.sessionId !== undefined) item.sessionId = entry.sessionId;
   return item;
 }
@@ -184,31 +185,32 @@ function shortReason(message: string): string {
   return line.length > 60 ? `${line.slice(0, 57)}...` : line;
 }
 
-/**
- * The conversations worth a circle: those a session is about (`linked`)
- * first, then any with a message in the last three days, newest first; at
- * most `MAX_CONVERSATIONS`.
- */
-export function keepConversations(
-  items: readonly Item[],
-  linked: ReadonlySet<string>,
-  now: number,
-): Item[] {
-  const conversations = items.filter((item) => item.kind === "conversation");
-  const newest = (a: Item, b: Item) => (b.last ?? 0) - (a.last ?? 0);
-  const withLink = conversations.filter((item) => linked.has(item.id)).sort(newest);
-  const recent = conversations
-    .filter(
-      (item) => !linked.has(item.id) && item.last !== undefined && now - item.last <= RECENT_MS,
-    )
-    .sort(newest);
-  return [...withLink, ...recent].slice(0, MAX_CONVERSATIONS);
+/** How well an item matches the sessions: 0 for not at all. */
+export type Match = (item: Item) => number;
+
+/** Best match first; recency only breaks ties. */
+function byMatch(score: Match): (a: Item, b: Item) => number {
+  return (a, b) => score(b) - score(a) || (b.last ?? 0) - (a.last ?? 0);
 }
 
-/** The cards worth a circle: those with a session first, at most `MAX_CARDS`. */
-export function keepCards(items: readonly Item[]): Item[] {
+/**
+ * The conversations worth a circle, from every one the listings gave: those
+ * that match a session's topic first, best match first; then any with a
+ * message in the last three days, newest first; at most `MAX_CONVERSATIONS`.
+ */
+export function keepConversations(items: readonly Item[], score: Match, now: number): Item[] {
+  const conversations = items.filter((item) => item.kind === "conversation");
+  const matched = conversations.filter((item) => score(item) > 0).sort(byMatch(score));
+  const recent = conversations
+    .filter((item) => score(item) <= 0 && item.last !== undefined && now - item.last <= RECENT_MS)
+    .sort((a, b) => (b.last ?? 0) - (a.last ?? 0));
+  return [...matched, ...recent].slice(0, MAX_CONVERSATIONS);
+}
+
+/** The cards worth a circle: those with a session first, then those that match one best; at most `MAX_CARDS`. */
+export function keepCards(items: readonly Item[], score: Match = () => 0): Item[] {
   const cards = items.filter((item) => item.kind === "card");
   const ticketed = cards.filter((card) => card.sessionId !== undefined);
-  const rest = cards.filter((card) => card.sessionId === undefined);
+  const rest = cards.filter((card) => card.sessionId === undefined).sort(byMatch(score));
   return [...ticketed, ...rest].slice(0, MAX_CARDS);
 }

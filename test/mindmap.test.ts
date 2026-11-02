@@ -92,6 +92,86 @@ test("with read tools: a conversation joins, a failing source is named in the fo
   expect(view.legend.services.map((s) => s.name)).toEqual(["WhatsApp"]);
 });
 
+const PEOPLE_READ = async (name: string) => {
+  if (name === "whatsapp_chats")
+    return [
+      "- **Ada Lovelace** `4670000001@s.whatsapp.net` · 2026-11-02 11:00 UTC",
+      "  Did the refund go through?",
+      "- **Bob Builder** `4670000002@s.whatsapp.net` · 2026-11-02 10:00 UTC",
+      "  The tax numbers are in",
+    ].join("\n");
+  if (name === "gmail_search")
+    return [
+      "t1 | 1 msg | Mon, 02 Nov 2026 09:00:00 +0000 | Ada Lovelace <ada@lovelace-labs.com> | Refund for order 1042",
+      "t2 | 1 msg | Mon, 02 Nov 2026 08:00:00 +0000 | Bob Builder <bob@builder-ab.se> | Q3 tax report",
+    ].join("\n");
+  throw new Error("not installed");
+};
+
+function peopleSessions(): FactSession[] {
+  return [
+    session({ title: "Reply to Ada about the refund", cwd: "/home/ada/src/shop" }),
+    session({ title: "Tax report for Bob", cwd: "/home/ada/src/books" }),
+  ];
+}
+
+test("no key: still clusters by shared people across services, and the footer says so", async () => {
+  const api = fakeApi({
+    sessions: peopleSessions(),
+    features: ["state", "read-tools"],
+    read: PEOPLE_READ,
+    key: null,
+  });
+  const map = new MindMap(api, {
+    chat: async () => {
+      throw new Error("no call without a key");
+    },
+  });
+  map.view(NOW);
+  await map.settle();
+  const view = map.view(NOW + 1000);
+  const themeOf = (title: string, service?: string) =>
+    view.nodes.find((n) => n.title.startsWith(title) && n.service === service)?.theme;
+  const ada = themeOf("Reply to Ada");
+  expect(ada).toBeDefined();
+  expect(themeOf("Ada Lovelace", "WhatsApp")).toBe(ada ?? "");
+  expect(themeOf("Ada Lovelace", "Gmail")).toBe(ada ?? "");
+  expect(themeOf("Bob Builder", "WhatsApp")).toBe(themeOf("Tax report") ?? "");
+  expect(view.themes.find((t) => t.id === ada)?.name).toBe("Ada");
+  expect(view.footer.model).toContain("No DeepInfra key");
+  const labels = view.links.filter((l) => l.kind === "related").map((l) => l.label.text);
+  expect(labels).toContain("Ada");
+});
+
+test("with a key: the model names each topic in one short call, and the footer names both models", async () => {
+  const api = fakeApi({
+    sessions: peopleSessions(),
+    features: ["state", "read-tools"],
+    read: PEOPLE_READ,
+    key: "k",
+  });
+  const prompts: string[] = [];
+  const map = new MindMap(api, {
+    embed: async (_key, _model, texts) => texts.map(() => [1, 0, 0]),
+    chat: async (_key, _model, messages) => {
+      const payload = JSON.parse(messages[1]?.content ?? "{}") as { items: { id: string }[] };
+      prompts.push(messages[1]?.content ?? "");
+      return JSON.stringify({
+        name: payload.items.length > 2 ? "Customer care" : "Bookkeeping",
+        sub: "named by the model",
+        items: payload.items.map((i) => ({ id: i.id, lines: ["line one", "line two"] })),
+        pairs: [],
+      });
+    },
+  });
+  map.view(NOW);
+  await map.settle();
+  const view = map.view(NOW + 1000);
+  expect(prompts.length).toBe(view.themes.length);
+  expect(view.themes.map((t) => t.sub)).toContain("named by the model");
+  expect(view.footer.model).toBe("Names by gemma-4-26B-A4B-it · similarity by embeddinggemma-300m");
+});
+
 test("the same view twice keeps every position", () => {
   const map = new MindMap(fakeApi({ sessions: sessions() }));
   const one = map.view(NOW);

@@ -5,14 +5,17 @@ they are about and their Trello cards. Click **Mind map** in prifly's status bar
 and it opens over nearly the whole window.
 
 - **All sessions** sits in the middle. Around it, on an ellipse, are 6 to 9
-  **themes**: what the work is about. Each session, conversation and card hangs
-  off its theme, with its title in bold and two short summary lines.
+  **themes**: what the work is about, whatever service it came from - a session,
+  the WhatsApp chat and the mail about the same person or product sit in one
+  theme. Each session, conversation and card hangs off its theme, with its
+  title in bold and two short summary lines.
 - A dot on each session's rim says how it stands: green running, amber waiting
   on you, red error, grey idle or snoozed.
 - **Solid arrows** are links prifly knows: a session _started_ another, a
   session _waits on_ another, a card is a session's _ticket_. **Dashed curves**
-  with an italic label are links the model sees between items about the same
-  thing.
+  with an italic label join items about the same thing, labelled by what they
+  share: the person's first name, the repository, the ticket id - or, for a
+  pair only embeddings tie, the model's 1-2 words.
 - Conversations and cards are smaller circles, ringed in their service's
   colour. A legend runs along the bottom; the footer says how the themes were
   made and which sources could not be read.
@@ -31,14 +34,17 @@ is hidden; nothing is read for a closed map. Each ask starts what is due:
 | Sessions (`api.sessions()`)                                                                      | every 15 s, so a new session shows within 15 s                                   |
 | WhatsApp, Gmail (`newer_than:3d`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                                                      |
 | Instagram, LinkedIn, Messenger (they drive your browser)                                         | every 15 min                                                                     |
-| The model                                                                                        | when the titles, brief lines or conversation heads change, at most once a minute |
+| Embeddings                                                                                       | for new or changed items only, one batched call, at most once a minute           |
+| Naming                                                                                           | one short call per new or changed theme, at most one round a minute              |
 
 Each source is one listing call through `api.tools.read` - never a loop over
 threads, and nothing is marked read. A missing or failing source is skipped and
-named in the footer. Up to 20 conversations are drawn - those a session is about
-first, then any with a message in the last 3 days - and up to 15 cards, those
-with a session first. Ended leftovers (untitled sessions, agent reports,
-prifly's summariser folds) are left out, and at most 40 sessions are drawn.
+named in the footer. Every conversation the listings give is matched against the
+sessions; up to 20 are drawn - those that match a session best first (recency
+only breaks ties), then any with a message in the last 3 days - and up to 15
+cards, those with a session first, then the best matches. Ended leftovers
+(untitled sessions, agent reports, prifly's summariser folds) are left out, and
+at most 40 sessions are drawn.
 
 Conversations and cards need prifly's `read-tools` feature, and the solid links
 and brief summaries its `session-facts` feature. On a prifly without them the map
@@ -46,26 +52,44 @@ shows sessions only, themed by repository.
 
 ## The themes
 
-A small instruct model on DeepInfra (`Qwen/Qwen2.5-7B-Instruct`) sorts the items
-into themes, writes the summary lines and sees the related links. It is sent each
-item's id, kind, title, repository and brief lines, and for a conversation the
-name, subject and the first 200 characters of the last message - plus the last
-themes, so they stay put. Its answer is checked with zod and kept in `api.state`.
+Themes are topic clusters, worked out in three steps:
+
+1. **Shared entities, no model** (`entities.ts`). People (a chat's name, a mail's
+   sender and address, a WhatsApp number), mail domains, repositories, card
+   names, ticket-like ids (`SHOP-12`, `prifly-541`) and rarer words are read out
+   of each item's title, brief lines, name, subject and last message. A person
+   is also found by their first name in another item's text ("Reply to Ada").
+   Two items that share one get a strong edge. A service's name is never an
+   entity, and one on more than 4-6 items (the reader's own name, a surname, a
+   word every mail has) ties nothing.
+2. **Embeddings** (`embed.ts`). Each item's own words - never its service - go to
+   `google/embeddinggemma-300m` on DeepInfra's OpenAI-compatible embeddings
+   endpoint (multilingual, Swedish and English). Vectors are cut to 256
+   dimensions and cached in `api.state` by a hash of the text. A pair above
+   cosine 0.84 gets a weak edge (EmbeddingGemma's cosines run high: on 48 real
+   items the median pair was 0.75, the top 1 % above 0.90).
+3. **Clustering** (`cluster.ts`). Louvain community detection on the weighted
+   graph, written here and deterministic, gives 6 to 9 topics. Each item starts
+   in its last topic and is a little sticky there, so one new item does not
+   reshuffle the map, and a topic keeps its id while most of its members stay.
+   An item with no edge joins the nearest topic by embedding, or its
+   repository's.
+
+The model only names: `google/gemma-4-26B-A4B-it` on DeepInfra gets one short
+call per new or changed topic, with its members' titles, brief lines, subjects
+and the start of the last message, and answers the theme's name, a line under
+it, two summary lines per member and labels for the pairs only embeddings tie.
+The answer is checked with zod and kept in `api.state`; a topic keeps its name
+while its members barely change. Measured on 28 real sessions and 50 chats and
+mails, a first refresh (87 texts embedded, 6 topics named in parallel) took
+about 6 s and cost about $0.0006; later refreshes send only what changed.
 
 It needs a DeepInfra key in prifly's vault: an `api-token` entry named
 `deepinfra` (or `deepinfra-api`) at level 1, the one level an extension can read.
-Without one - or before the model has answered - there is one theme per
-repository, conversations under their service and cards under "Trello", with
-summaries from the sessions' brief lines. When a call fails after an earlier
-one succeeded, the last themes are kept rather than the map being reshuffled.
-
-The model was chosen by measuring two candidates on 33 real session titles, three
-runs each:
-
-| Model                                 | Valid JSON                     | Time per sorting | Themes                                                                                |
-| ------------------------------------- | ------------------------------ | ---------------- | ------------------------------------------------------------------------------------- |
-| Qwen/Qwen2.5-7B-Instruct              | 3 of 3                         | 33-52 s          | named by what the work is (Disk space, Integrations, Emails); lines fit 22 characters |
-| meta-llama/Meta-Llama-3.1-8B-Instruct | 2 of 3 (one timed out at 60 s) | 42-57 s          | generic ("Customer", "Person", "Tool"); most lines too long                           |
+Without one, or when a call fails, entity matching and clustering still run (no
+embeddings), so themes still mix services where items share a person or a name;
+each is named by the entity most of its members share, or its repository, and
+the footer says what is missing.
 
 ## The layout
 

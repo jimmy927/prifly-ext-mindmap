@@ -29,7 +29,21 @@ describe("reading tool answers", () => {
     const raw =
       "t1 | 2 msgs | Mon, 02 Nov 2026 09:00:00 +0000 | Grace Hopper <grace@example.com> | Compiler notes";
     const [entry] = parseListing(raw, ["thread_id", "messages", "date", "from", "subject"]);
-    expect(entry).toMatchObject({ key: "t1", name: "Grace Hopper", subject: "Compiler notes" });
+    expect(entry).toMatchObject({
+      key: "t1",
+      name: "Grace Hopper",
+      address: "grace@example.com",
+      subject: "Compiler notes",
+    });
+    // gmail_search cuts long senders off mid-address: the name is still clean.
+    const [cut] = parseListing("t2 | 1 msg | Mon, 02 Nov 2026 09:00:00 +0000 | Ada <ada@exa | Hi", [
+      "thread_id",
+      "messages",
+      "date",
+      "from",
+      "subject",
+    ]);
+    expect(cut?.name).toBe("Ada");
     expect(entry?.last).toBe(Date.parse("2026-11-02T09:00:00Z"));
   });
 
@@ -168,7 +182,7 @@ describe("the sources", () => {
 });
 
 describe("which conversations and cards are kept", () => {
-  test("linked ones first, then the last three days, at most 20", () => {
+  test("matched ones first, then the last three days, at most 20", () => {
     const old = Array.from({ length: 5 }, (_, i) =>
       item({ id: `c:old${i}`, kind: "conversation", last: NOW - 10 * 24 * HOUR }),
     );
@@ -176,7 +190,7 @@ describe("which conversations and cards are kept", () => {
       item({ id: `c:new${i}`, kind: "conversation", last: NOW - i * HOUR }),
     );
     const linked = new Set(["c:old0", "c:old1", "c:new29"]);
-    const kept = keepConversations([...old, ...recent], linked, NOW);
+    const kept = keepConversations([...old, ...recent], (i) => (linked.has(i.id) ? 1 : 0), NOW);
     expect(kept).toHaveLength(MAX_CONVERSATIONS);
     expect(
       kept

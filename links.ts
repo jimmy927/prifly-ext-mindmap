@@ -1,7 +1,8 @@
 /**
  * The links between items: the solid ones prifly knows (a session started by
  * another, a session that waits on another, a card that is a session's
- * ticket) and the dashed "related" ones the model sees.
+ * ticket) and the dashed "related" ones between items that share an entity or
+ * that embeddings find very similar.
  */
 
 import type { Item, Link, Sorting } from "./types";
@@ -47,7 +48,7 @@ function linksOf(item: Item, sessions: readonly Item[]): Link[] {
   return links;
 }
 
-/** The model's related links between items on the map, minus pairs a known link already joins. */
+/** The sorting's related links between items on the map, minus pairs a known link already joins. */
 export function relatedLinks(
   items: readonly Item[],
   sorting: Sorting,
