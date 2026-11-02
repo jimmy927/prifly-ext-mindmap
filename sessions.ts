@@ -15,10 +15,12 @@ function isSummariserFolder(cwd: string): boolean {
 }
 
 /**
- * A leftover nobody looks at: an ended untitled one, an agent's report, or a
- * summariser fold. A live untitled session stays: it is new, its name is coming.
+ * A leftover nobody looks at: an archived session, an ended untitled one, an
+ * agent's report, or a summariser fold. A live untitled session stays: it is
+ * new, its name is coming.
  */
 export function isLeftover(session: FactSession): boolean {
+  if (session.archived === true) return true;
   const title = session.title.trim();
   const untitled = title === "" || title.toLowerCase() === "untitled";
   if (untitled && session.state === "ended") return true;

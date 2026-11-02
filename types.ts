@@ -30,6 +30,8 @@ export type SessionFacts = {
   snoozedUntil?: string;
   /** The full id of the session that started this one. */
   parentId?: string;
+  /** True for a session the reader archived; absent on older prifly. */
+  archived?: boolean;
 };
 
 export type FactSession = ExtensionSession & SessionFacts;

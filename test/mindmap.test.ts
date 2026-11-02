@@ -41,6 +41,27 @@ test("without the new features: sessions only, themed by repository, leftovers d
   expect(view.footer.skipped).toEqual([]);
 });
 
+test("an archived session is left out and does not count towards the cap; an unarchived one stays", () => {
+  const shape = { cwd: "/home/ada/src/shop", state: "working" as const };
+  const live = [
+    session({ ...shape, title: "Kept plain" }),
+    session({ ...shape, title: "Kept explicit", archived: false }),
+    session({ ...shape, title: "Archived one", archived: true }),
+  ];
+  const titles = (list: FactSession[]) =>
+    new MindMap(fakeApi({ sessions: list }))
+      .view(NOW)
+      .nodes.map((n) => n.title)
+      .sort();
+  expect(titles(live)).toEqual(["Kept explicit", "Kept plain"]);
+
+  // 40 archived ones ahead of a kept one: the kept one still fits under the cap.
+  const many = Array.from({ length: 40 }, (_, i) =>
+    session({ ...shape, title: `Old ${i}`, archived: true }),
+  );
+  expect(titles([...many, session({ ...shape, title: "Last kept" })])).toEqual(["Last kept"]);
+});
+
 test("a new session shows on the next read of sessions, within 15 s", () => {
   const list = sessions();
   const api = fakeApi({ sessions: list });
