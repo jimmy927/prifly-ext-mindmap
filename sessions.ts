@@ -42,8 +42,8 @@ function repoName(repo: string): string {
 
 function snoozed(session: FactSession, now: number): boolean {
   const until = session.snoozedUntil;
-  if (until === undefined || until === null) return false;
-  const at = typeof until === "number" ? until : Date.parse(until);
+  if (typeof until !== "string") return false;
+  const at = Date.parse(until);
   return Number.isFinite(at) && at > now;
 }
 

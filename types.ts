@@ -6,18 +6,18 @@
 
 import type { ExtensionApi, ExtensionSession } from "@prifly/extension-api";
 
-/** A session's brief, as prifly's "session-facts" feature gives it. */
+/** A session's brief, as prifly's "session-facts" feature gives it (read tolerantly all the same). */
 export type Brief = {
-  done?: string[];
-  next?: string[];
-  blocked?: string[];
-  blockedOnYou?: string[];
+  done: string[];
+  next: string[];
+  blocked: string[];
+  blockedOnYou: string[];
 };
 
 /**
  * The optional fields prifly adds to a session behind the feature
- * "session-facts". Each may be absent: the map then has no summary lines from
- * them and no solid links.
+ * "session-facts" (prifly branch prifly-541). Each may be absent: the map then
+ * has no summary lines from them and no solid links.
  */
 export type SessionFacts = {
   brief?: Brief;
@@ -26,24 +26,45 @@ export type SessionFacts = {
   /** Sessions this one waits on, by their first 8 characters. */
   waitsOn?: string[];
   asksYou?: boolean;
-  /** Epoch ms or an ISO time. */
-  snoozedUntil?: number | string | null;
-  /** The session that started this one. */
-  parentId?: string | null;
+  /** An ISO time. */
+  snoozedUntil?: string;
+  /** The full id of the session that started this one. */
+  parentId?: string;
 };
 
 export type FactSession = ExtensionSession & SessionFacts;
 
-/** `api.tools.read`, behind the feature "read-tools": another extension's tool, read-only. */
+/** What `api.tools.read` answers. */
+export type ReadResult = { ok: true; text: string } | { ok: false; error: string };
+
+/** Another extension's tool, read-only: its text, or a throw with why it failed. */
 export type ReadTool = (name: string, args: Record<string, unknown>) => Promise<string>;
 
-/** `api.tools.read` where this prifly has it, else null: sessions only. */
+type ToolsWithRead = NonNullable<ExtensionApi["tools"]> & {
+  read?: (name: string, args: Record<string, unknown>) => Promise<ReadResult>;
+};
+
+/** The answer's text; a failed read throws its error. A bare string is taken as the text. */
+export function textOf(result: unknown): string {
+  if (typeof result === "string") return result;
+  if (typeof result === "object" && result !== null && "ok" in result) {
+    const answer = result as { ok: unknown; text?: unknown; error?: unknown };
+    if (answer.ok === true && typeof answer.text === "string") return answer.text;
+    throw new Error(typeof answer.error === "string" ? answer.error : "the read failed");
+  }
+  throw new Error("the read gave no text");
+}
+
+/**
+ * `api.tools.read` where this prifly has it (feature "read-tools"), else null:
+ * sessions only. It reads only the tools the manifest's `reads` names.
+ */
 export function readToolOf(api: ExtensionApi): ReadTool | null {
   if (!(api.features ?? []).includes("read-tools")) return null;
-  const tools = api.tools as (ExtensionApi["tools"] & { read?: unknown }) | undefined;
+  const tools = api.tools as ToolsWithRead | undefined;
   const read = tools?.read;
-  if (typeof read !== "function") return null;
-  return (name, args) => Promise.resolve(read.call(tools, name, args)).then(String);
+  if (tools === undefined || typeof read !== "function") return null;
+  return async (name, args) => textOf(await read.call(tools, name, args));
 }
 
 export type ItemKind = "session" | "conversation" | "card";

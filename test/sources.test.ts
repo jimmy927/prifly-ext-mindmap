@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { parseListing } from "../parse";
 import { keepCards, keepConversations, MAX_CONVERSATIONS, type Source, Sources } from "../sources";
+import { textOf } from "../types";
 import { item } from "./fake";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
@@ -54,6 +55,64 @@ describe("reading tool answers", () => {
 
   test("anything else is nothing", () => {
     expect(parseListing("Not signed in.")).toEqual([]);
+  });
+});
+
+describe("trello_cards", () => {
+  const trello: Source = {
+    tool: "trello_cards",
+    service: "Trello",
+    kind: "card",
+    everyMs: 300_000,
+    args: () => ({}),
+  };
+  const cards = JSON.stringify([
+    {
+      id: "c1",
+      name: "Fix login",
+      column: "Doing",
+      labels: ["bug"],
+      url: "https://trello.com/c/abc",
+      lastActivity: "2026-11-02T10:00:00.000Z",
+      sessionId: "aaaaaaaa",
+    },
+    {
+      id: "c2",
+      name: "Plan Q1",
+      column: "Backlog",
+      labels: [],
+      url: "https://trello.com/c/def",
+      lastActivity: "2026-10-01T10:00:00.000Z",
+      sessionId: null,
+    },
+  ]);
+
+  test("its JSON array reads as cards, a null sessionId as none", async () => {
+    const s = new Sources(async () => cards, [trello]);
+    await s.refresh(NOW);
+    expect(s.items()).toMatchObject([
+      {
+        id: "k:c1",
+        kind: "card",
+        title: "Fix login",
+        url: "https://trello.com/c/abc",
+        sessionId: "aaaaaaaa",
+      },
+      { id: "k:c2", kind: "card", title: "Plan Q1" },
+    ]);
+    expect(s.items()[1]?.sessionId).toBeUndefined();
+  });
+
+  test("plain text in place of cards is the tool failing, and is named", async () => {
+    const s = new Sources(async () => "Trello is not connected.", [trello]);
+    await s.refresh(NOW);
+    expect(s.items()).toEqual([]);
+    expect(s.skipped()).toEqual(["Trello (Trello is not connected.)"]);
+  });
+
+  test("prifly's read answer is unwrapped; a failed one throws its error", () => {
+    expect(textOf({ ok: true, text: "[]" })).toBe("[]");
+    expect(() => textOf({ ok: false, error: "not in reads" })).toThrow("not in reads");
   });
 });
 

@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { clearOf, placeLabel } from "../curves";
-import { CENTRE, FRAME, layout, MEMBER_R, type Placed, ROOT_R, SMALL_R } from "../layout";
+import { CENTRE, FRAME, layout, MEMBER_R, type Placed, ROOT_R, SMALL_R, seedsOf } from "../layout";
 
 function input() {
   const themes = ["t0", "t1", "t2", "t3", "t4", "t5", "t6"];
@@ -48,9 +48,11 @@ describe("the layout", () => {
     expect(layout(input())).toEqual(first);
   });
 
+  const previous = new Map(all(first).map((c) => [c.id, { x: c.x, y: c.y }]));
+  const previousTheme = new Map(input().members.map((m) => [m.id, m.theme]));
+
   test("seeded with the last positions, circles hardly move", () => {
-    const previous = new Map(all(first).map((c) => [c.id, { x: c.x, y: c.y }]));
-    const again = layout({ ...input(), previous });
+    const again = layout({ ...input(), previous, previousTheme });
     const moved = again.members.map((m) => {
       const was = previous.get(m.id);
       return was === undefined ? Number.POSITIVE_INFINITY : Math.hypot(m.x - was.x, m.y - was.y);
@@ -58,11 +60,25 @@ describe("the layout", () => {
     expect(Math.max(...moved)).toBeLessThan(25);
   });
 
+  test("a member that changed theme is not held at its old place", () => {
+    const moved = input();
+    const member = moved.members.find((m) => m.id === "t0-m0");
+    if (member === undefined) throw new Error("no t0-m0");
+    member.theme = "t3";
+    expect(seedsOf({ ...moved, previous, previousTheme }).has("t0-m0")).toBe(false);
+    expect(seedsOf({ ...moved, previous, previousTheme }).has("t0-m1")).toBe(true);
+    // With one theme more every theme but the top one moves round the ellipse:
+    // only the top theme's members are held.
+    const more = { ...input(), themes: [...input().themes, "t7"] };
+    const held = [...seedsOf({ ...more, previous, previousTheme }).keys()];
+    expect(held.length).toBeGreaterThan(0);
+    expect(held.every((id) => id.startsWith("t0-"))).toBe(true);
+  });
+
   test("one new member leaves the others near where they were", () => {
-    const previous = new Map(all(first).map((c) => [c.id, { x: c.x, y: c.y }]));
     const more = input();
     more.members.push({ id: "t0-new", theme: "t0", r: MEMBER_R });
-    const again = layout({ ...more, previous });
+    const again = layout({ ...more, previous, previousTheme });
     const moved = again.members
       .filter((m) => m.id !== "t0-new")
       .map((m) => {

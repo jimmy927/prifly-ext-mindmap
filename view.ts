@@ -98,6 +98,8 @@ export type ViewInput = {
   sorting: Sorting;
   links: readonly Link[];
   previous: ReadonlyMap<string, Point>;
+  /** Each item's theme last time, by id. */
+  previousTheme: ReadonlyMap<string, string>;
   previousOrder: readonly string[];
   colours: ReadonlyMap<string, string>;
   footer: MapView["footer"];
@@ -165,7 +167,12 @@ export function buildView(input: ViewInput): {
     const theme = sorting.themeOf[item.id];
     return theme === undefined ? [] : [{ id: item.id, theme, r: radiusOf(item.kind) }];
   });
-  const placed = layout({ themes: order, members, previous: input.previous });
+  const placed = layout({
+    themes: order,
+    members,
+    previous: input.previous,
+    previousTheme: input.previousTheme,
+  });
   const themes: ViewTheme[] = placed.themes.map((spot) => {
     const theme = sorting.themes.find((t) => t.id === spot.id);
     return {

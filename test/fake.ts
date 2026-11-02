@@ -1,7 +1,7 @@
 /** A fake `api` and invented items for the tests: no real prifly data, no network. */
 
 import type { ExtensionApi, ExtensionStateApi } from "@prifly/extension-api";
-import type { FactSession, Item } from "../types";
+import type { FactSession, Item, ReadResult } from "../types";
 
 export function fakeState(): ExtensionStateApi & { docs: Map<string, unknown> } {
   const docs = new Map<string, unknown>();
@@ -40,10 +40,15 @@ export function fakeApi(
   const reads: string[] = [];
   const tools = {
     register: () => undefined,
-    read: async (name: string, args: Record<string, unknown>) => {
+    // As prifly answers: { ok, text } or { ok: false, error }, never a throw.
+    read: async (name: string, args: Record<string, unknown>): Promise<ReadResult> => {
       reads.push(name);
-      if (options.read === undefined) throw new Error(`no such tool: ${name}`);
-      return options.read(name, args);
+      if (options.read === undefined) return { ok: false, error: `no such tool: ${name}` };
+      try {
+        return { ok: true, text: await options.read(name, args) };
+      } catch (error) {
+        return { ok: false, error: (error as Error).message };
+      }
     },
   };
   const api = {

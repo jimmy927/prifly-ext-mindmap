@@ -9,8 +9,8 @@ and it opens over nearly the whole window.
   off its theme, with its title in bold and two short summary lines.
 - A dot on each session's rim says how it stands: green running, amber waiting
   on you, red error, grey idle or snoozed.
-- **Solid arrows** are links prifly knows: a session *started* another, a
-  session *waits on* another, a card is a session's *ticket*. **Dashed curves**
+- **Solid arrows** are links prifly knows: a session _started_ another, a
+  session _waits on_ another, a card is a session's _ticket_. **Dashed curves**
   with an italic label are links the model sees between items about the same
   thing.
 - Conversations and cards are smaller circles, ringed in their service's
@@ -26,12 +26,12 @@ message or changes anything.
 The page asks for the map every 5 s while it is visible, and not at all while it
 is hidden; nothing is read for a closed map. Each ask starts what is due:
 
-| What | How often |
-| --- | --- |
-| Sessions (`api.sessions()`) | every 15 s, so a new session shows within 15 s |
-| WhatsApp, Gmail (`newer_than:3d`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min |
-| Instagram, LinkedIn, Messenger (they drive your browser) | every 15 min |
-| The model | when the titles, brief lines or conversation heads change, at most once a minute |
+| What                                                                                             | How often                                                                        |
+| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
+| Sessions (`api.sessions()`)                                                                      | every 15 s, so a new session shows within 15 s                                   |
+| WhatsApp, Gmail (`newer_than:3d`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                                                      |
+| Instagram, LinkedIn, Messenger (they drive your browser)                                         | every 15 min                                                                     |
+| The model                                                                                        | when the titles, brief lines or conversation heads change, at most once a minute |
 
 Each source is one listing call through `api.tools.read` - never a loop over
 threads, and nothing is marked read. A missing or failing source is skipped and
@@ -62,10 +62,10 @@ one succeeded, the last themes are kept rather than the map being reshuffled.
 The model was chosen by measuring two candidates on 33 real session titles, three
 runs each:
 
-| Model | Valid JSON | Time per sorting | Themes |
-| --- | --- | --- | --- |
-| Qwen/Qwen2.5-7B-Instruct | 3 of 3 | 33-52 s | named by what the work is (Disk space, Integrations, Emails); lines fit 22 characters |
-| meta-llama/Meta-Llama-3.1-8B-Instruct | 2 of 3 (one timed out at 60 s) | 42-57 s | generic ("Customer", "Person", "Tool"); most lines too long |
+| Model                                 | Valid JSON                     | Time per sorting | Themes                                                                                |
+| ------------------------------------- | ------------------------------ | ---------------- | ------------------------------------------------------------------------------------- |
+| Qwen/Qwen2.5-7B-Instruct              | 3 of 3                         | 33-52 s          | named by what the work is (Disk space, Integrations, Emails); lines fit 22 characters |
+| meta-llama/Meta-Llama-3.1-8B-Instruct | 2 of 3 (one timed out at 60 s) | 42-57 s          | generic ("Customer", "Person", "Tool"); most lines too long                           |
 
 ## The layout
 

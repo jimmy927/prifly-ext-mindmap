@@ -40,6 +40,7 @@ export class MindMap {
   readonly sources: Sources;
   readonly sorter: Sorter;
   private positions = new Map<string, Point>();
+  private themes = new Map<string, string>();
   private order: string[] = [];
   private colours = new Map<string, string>();
   private last: { key: string; view: MapView } | null = null;
@@ -134,12 +135,14 @@ export class MindMap {
       sorting,
       links,
       previous: this.positions,
+      previousTheme: this.themes,
       previousOrder: this.order,
       colours: this.colours,
       footer,
     });
     this.order = built.order;
     this.colours = built.colours;
+    this.themes = new Map(built.view.nodes.map((n) => [n.id, n.theme]));
     this.positions = new Map(
       [...built.view.nodes, ...built.view.themes].map((n) => [n.id, { x: n.x, y: n.y }]),
     );

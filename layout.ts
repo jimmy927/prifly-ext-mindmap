@@ -97,8 +97,10 @@ export type LayoutInput = {
   /** Theme ids, in their order round the ellipse. */
   themes: readonly string[];
   members: readonly LayoutMember[];
-  /** Where circles were last time, by id. */
+  /** Where circles (members and themes) were last time, by id. */
   previous?: ReadonlyMap<string, Point>;
+  /** Each member's theme last time: a member that changed theme, or whose theme moved, starts afresh. */
+  previousTheme?: ReadonlyMap<string, string>;
 };
 export type Placed = Point & { id: string; r: number };
 export type LayoutResult = { themes: Placed[]; members: Placed[] };
@@ -120,7 +122,33 @@ function clamp(node: Node): void {
   node.y = Math.min(FRAME.height - node.r - EDGE, Math.max(node.r + EDGE, node.y ?? CENTRE.y));
 }
 
-function startNodes(input: LayoutInput): { fixed: Node[]; members: Node[] } {
+/**
+ * The last places worth starting from: a member's, when it is under the same
+ * theme as last time and that theme is where it was. Anything else would hold
+ * a circle far from its theme.
+ */
+export function seedsOf(input: LayoutInput): Map<string, Point> {
+  const places = themePlaces(input.themes.length);
+  const stayed = new Set(
+    input.themes.filter((id, i) => {
+      const was = input.previous?.get(id);
+      const now = places[i];
+      return was !== undefined && now !== undefined && Math.hypot(was.x - now.x, was.y - now.y) < 1;
+    }),
+  );
+  const seeds = new Map<string, Point>();
+  for (const member of input.members) {
+    const last = input.previous?.get(member.id);
+    const sameTheme = input.previousTheme?.get(member.id) === member.theme;
+    if (last !== undefined && sameTheme && stayed.has(member.theme)) seeds.set(member.id, last);
+  }
+  return seeds;
+}
+
+function startNodes(
+  input: LayoutInput,
+  seeds: ReadonlyMap<string, Point>,
+): { fixed: Node[]; members: Node[] } {
   const places = themePlaces(input.themes.length);
   const themeNodes = new Map<string, Node>();
   const fixed: Node[] = [
@@ -158,7 +186,7 @@ function startNodes(input: LayoutInput): { fixed: Node[]; members: Node[] } {
     const base = Math.atan2(out.y, out.x);
     own.forEach((member, j) => {
       const angle = base + (j - (own.length - 1) / 2) * FAN.step;
-      const last = input.previous?.get(member.id);
+      const last = seeds.get(member.id);
       const home = { x: at.x + out.x * 120, y: at.y + out.y * 120 };
       members.push({
         id: member.id,
@@ -208,7 +236,8 @@ function pushApart(a: Node | undefined, b: Node | undefined): boolean {
 
 /** Every circle's place. Deterministic for the same input. */
 export function layout(input: LayoutInput): LayoutResult {
-  const { fixed, members } = startNodes(input);
+  const seeds = seedsOf(input);
+  const { fixed, members } = startNodes(input, seeds);
   const nodes = [...fixed, ...members];
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const links: SimulationLinkDatum<Node>[] = input.members.flatMap((member) => {
@@ -218,7 +247,7 @@ export function layout(input: LayoutInput): LayoutResult {
   });
   // Seeded from the last places, the simulation starts cool so circles settle where they were;
   // with newcomers among them, warmer, so the others make room.
-  const seededCount = members.filter((m) => input.previous?.has(m.id) === true).length;
+  const seededCount = members.filter((m) => seeds.has(m.id)).length;
   const heat = seededCount === 0 ? 1 : seededCount === members.length ? 0.05 : 0.3;
   const simulation = forceSimulation<Node>(nodes)
     .randomSource(seeded(nodes.length * 7919 + 17))

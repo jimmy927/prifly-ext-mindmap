@@ -107,10 +107,19 @@ function itemOf(source: Source, entry: Entry): Item {
   return item;
 }
 
-/** One source's answer as items. A throw is the source failing. */
+/**
+ * One source's answer as items. A throw is the source failing. Cards come as
+ * JSON (`trello_cards`): plain text in their place is the tool saying why it
+ * has none ("Trello is not connected"), and is taken as a failure.
+ */
 export async function readSource(read: ReadTool, source: Source, now: number): Promise<Item[]> {
   const raw = await read(source.tool, source.args(now));
-  return parseListing(raw, source.columns).map((entry) => itemOf(source, entry));
+  const entries = parseListing(raw, source.columns);
+  const text = raw.trim();
+  if (source.kind === "card" && entries.length === 0 && text !== "" && !/^[[{]/.test(text)) {
+    throw new Error(text.split("\n")[0] ?? text);
+  }
+  return entries.map((entry) => itemOf(source, entry));
 }
 
 /** Reads each source when it is due, one call each, and keeps what it last gave. */
