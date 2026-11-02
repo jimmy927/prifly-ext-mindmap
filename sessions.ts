@@ -26,7 +26,8 @@ export function isLeftover(session: FactSession): boolean {
 export function repoOfFolder(cwd: string): string {
   const parts = cwd.split(/[\\/]+/).filter((part) => part !== "");
   const worktrees = parts.findIndex(
-    (part, i) => part.endsWith(".worktrees") || (part === ".claude" && parts[i + 1] === "worktrees"),
+    (part, i) =>
+      part.endsWith(".worktrees") || (part === ".claude" && parts[i + 1] === "worktrees"),
   );
   const cut = worktrees === -1 ? parts : parts.slice(0, worktrees + 1);
   const last = cut.at(-1) ?? "";

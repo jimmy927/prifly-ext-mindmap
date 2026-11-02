@@ -82,8 +82,13 @@ export class MindMap {
     const all = this.sources.items();
     const conversations = all
       .filter((item) => item.kind === "conversation")
-      .filter((item) => linked.has(item.id) || (item.last !== undefined && now - item.last <= RECENT_MS))
-      .sort((a, b) => Number(linked.has(b.id)) - Number(linked.has(a.id)) || (b.last ?? 0) - (a.last ?? 0))
+      .filter(
+        (item) => linked.has(item.id) || (item.last !== undefined && now - item.last <= RECENT_MS),
+      )
+      .sort(
+        (a, b) =>
+          Number(linked.has(b.id)) - Number(linked.has(a.id)) || (b.last ?? 0) - (a.last ?? 0),
+      )
       .slice(0, MODEL_CONVERSATIONS);
     return [...this.sessions, ...conversations, ...keepCards(all)];
   }
@@ -93,7 +98,10 @@ export class MindMap {
     this.readSessions(now);
     const before = this.linkedIds(this.sorter.sortingFor(this.sessions));
     const candidates = this.candidates(now, before);
-    this.pending = Promise.all([this.sources.refresh(now), this.sorter.update(candidates, now)]).then(() => undefined);
+    this.pending = Promise.all([
+      this.sources.refresh(now),
+      this.sorter.update(candidates, now),
+    ]).then(() => undefined);
     const sorting = this.sorter.sortingFor(candidates);
     const linked = this.linkedIds(sorting);
     const items = [
@@ -132,7 +140,9 @@ export class MindMap {
     });
     this.order = built.order;
     this.colours = built.colours;
-    this.positions = new Map([...built.view.nodes, ...built.view.themes].map((n) => [n.id, { x: n.x, y: n.y }]));
+    this.positions = new Map(
+      [...built.view.nodes, ...built.view.themes].map((n) => [n.id, { x: n.x, y: n.y }]),
+    );
     this.last = { key, view: built.view };
     return built.view;
   }

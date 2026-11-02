@@ -108,19 +108,34 @@ export class Sorter {
     }
   }
 
-  private async ask(key: string, items: readonly Item[], print: string, now: number): Promise<void> {
+  private async ask(
+    key: string,
+    items: readonly Item[],
+    print: string,
+    now: number,
+  ): Promise<void> {
     const started = Date.now();
     try {
-      const text = await this.deps.chat(key, this.model, promptOf(items, this.saved?.sorting.themes ?? []));
+      const text = await this.deps.chat(
+        key,
+        this.model,
+        promptOf(items, this.saved?.sorting.themes ?? []),
+      );
       const sorting = parseAnswer(text, items, this.model);
       if (sorting === null) throw new Error("the answer was not a valid sorting");
       this.saved = { fingerprint: print, at: now, sorting };
       this.status = "model";
-      this.deps.log?.("sorted", { items: items.length, themes: sorting.themes.length, ms: Date.now() - started });
+      this.deps.log?.("sorted", {
+        items: items.length,
+        themes: sorting.themes.length,
+        ms: Date.now() - started,
+      });
       await this.deps.state?.set(STATE_NAME, this.saved).catch(() => undefined);
     } catch (error) {
       this.status = "failed";
-      this.deps.log?.("sort_failed", { error: error instanceof Error ? error.message : String(error) });
+      this.deps.log?.("sort_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -135,7 +150,10 @@ export class Sorter {
   statusLine(): string {
     if (this.status === "model") return `Themes by ${this.model.split("/").at(-1) ?? this.model}`;
     if (this.status === "no key") return "No DeepInfra key in the vault: themes by repository";
-    if (this.status === "failed") return this.saved === null ? "The model failed: themes by repository" : "The model failed: last themes kept";
+    if (this.status === "failed")
+      return this.saved === null
+        ? "The model failed: themes by repository"
+        : "The model failed: last themes kept";
     return "Themes by repository until the model answers";
   }
 }

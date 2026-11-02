@@ -16,7 +16,11 @@ export const LINE_CHARS = 22;
 export function fingerprint(items: readonly Item[]): string {
   const parts = [...items]
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
-    .map((item) => [item.id, item.title, item.brief.join("\n"), item.subject ?? "", item.head ?? ""].join("\u0001"));
+    .map((item) =>
+      [item.id, item.title, item.brief.join("\n"), item.subject ?? "", item.head ?? ""].join(
+        "\u0001",
+      ),
+    );
   return createHash("sha1").update(parts.join("\u0002")).digest("hex");
 }
 
@@ -44,7 +48,12 @@ export function shortIds(items: readonly Item[]): Map<string, string> {
 }
 
 function promptItem(item: Item, short: string): Record<string, unknown> {
-  const out: Record<string, unknown> = { id: short, kind: item.kind, title: item.title, repo: item.repo };
+  const out: Record<string, unknown> = {
+    id: short,
+    kind: item.kind,
+    title: item.title,
+    repo: item.repo,
+  };
   if (item.brief.length > 0) out["brief"] = item.brief.slice(0, 6);
   if (item.kind === "conversation") {
     if (item.name !== undefined) out["name"] = item.name;
@@ -67,7 +76,10 @@ const SYSTEM = [
 ].join("\n");
 
 /** The chat messages for the model. */
-export function promptOf(items: readonly Item[], previous: readonly Theme[]): { role: string; content: string }[] {
+export function promptOf(
+  items: readonly Item[],
+  previous: readonly Theme[],
+): { role: string; content: string }[] {
   const ids = shortIds(items);
   const payload = {
     previousThemes: previous.map(({ id, name, sub }) => ({ id, name, sub })),
@@ -81,7 +93,13 @@ export function promptOf(items: readonly Item[], previous: readonly Theme[]): { 
 
 const AnswerSchema = z.object({
   themes: z
-    .array(z.object({ id: z.coerce.string().min(1), name: z.string().min(1), sub: z.string().catch("") }))
+    .array(
+      z.object({
+        id: z.coerce.string().min(1),
+        name: z.string().min(1),
+        sub: z.string().catch(""),
+      }),
+    )
     .min(1),
   items: z.array(
     z.object({
@@ -91,7 +109,9 @@ const AnswerSchema = z.object({
     }),
   ),
   related: z
-    .array(z.object({ a: z.coerce.string(), b: z.coerce.string(), label: z.string().catch("related") }))
+    .array(
+      z.object({ a: z.coerce.string(), b: z.coerce.string(), label: z.string().catch("related") }),
+    )
     .catch([]),
 });
 
@@ -125,7 +145,10 @@ export function parseAnswer(text: string, items: readonly Item[], model: string)
     const id = byShort.get(entry.id.toLowerCase());
     if (id === undefined || !themeIds.has(entry.theme)) continue;
     sorting.themeOf[id] = entry.theme;
-    sorting.lines[id] = entry.lines.filter((line) => line.trim() !== "").slice(0, 2).map((line) => shorten(line));
+    sorting.lines[id] = entry.lines
+      .filter((line) => line.trim() !== "")
+      .slice(0, 2)
+      .map((line) => shorten(line));
   }
   if (Object.keys(sorting.themeOf).length * 2 < items.length) return null;
   for (const link of answer.related.slice(0, 30)) {
@@ -150,7 +173,9 @@ function dedupeThemes(themes: readonly Theme[]): Theme[] {
 /** Two lines for an item without the model: its brief's first two, a conversation's subject and head, or none. */
 export function fallbackLines(item: Item): string[] {
   if (item.brief.length > 0) return item.brief.slice(0, 2).map((line) => shorten(line));
-  const lines = [item.subject, item.head].filter((line): line is string => line !== undefined && line !== "");
+  const lines = [item.subject, item.head].filter(
+    (line): line is string => line !== undefined && line !== "",
+  );
   return lines.slice(0, 2).map((line) => shorten(line));
 }
 
@@ -158,6 +183,14 @@ const OTHER: Theme = { id: "other", name: "Other", sub: "" };
 
 function plural(n: number, word: string): string {
   return `${n} ${word}${n === 1 ? "" : "s"}`;
+}
+
+/** A repository's (or service's) theme: "prifly", "3 sessions". */
+function repoTheme(repo: string, members: readonly Item[]): Theme {
+  const sessions = members.filter((m) => m.kind === "session").length;
+  const word = members[0]?.kind === "card" ? "card" : "conversation";
+  const sub = sessions > 0 ? plural(sessions, "session") : plural(members.length, word);
+  return { id: `r:${repo}`, name: shorten(repo, 18), sub };
 }
 
 /** One theme per repository (conversations under their service, cards under "Trello"), at most `MAX_THEMES`. */
@@ -171,11 +204,9 @@ export function fallbackSorting(items: readonly Item[]): Sorting {
   const kept = ranked.length > MAX_THEMES ? ranked.slice(0, MAX_THEMES - 1) : ranked;
   const sorting: Sorting = { themes: [], themeOf: {}, lines: {}, related: [], by: "fallback" };
   for (const [repo, members] of kept) {
-    const id = `r:${repo}`;
-    const sessions = members.filter((m) => m.kind === "session").length;
-    const sub = sessions > 0 ? plural(sessions, "session") : plural(members.length, members[0]?.kind === "card" ? "card" : "conversation");
-    sorting.themes.push({ id, name: shorten(repo, 18), sub });
-    for (const member of members) sorting.themeOf[member.id] = id;
+    const theme = repoTheme(repo, members);
+    sorting.themes.push(theme);
+    for (const member of members) sorting.themeOf[member.id] = theme.id;
   }
   const rest = ranked.slice(kept.length).flatMap(([, members]) => members);
   if (rest.length > 0) {
@@ -205,7 +236,9 @@ export function completeSorting(sorting: Sorting, items: readonly Item[]): Sorti
   let other = false;
   for (const item of items) {
     const known = sorting.themeOf[item.id];
-    const counts = [...(byRepo.get(item.repo) ?? new Map<string, number>())].sort((a, b) => b[1] - a[1]);
+    const counts = [...(byRepo.get(item.repo) ?? new Map<string, number>())].sort(
+      (a, b) => b[1] - a[1],
+    );
     const theme = known ?? counts[0]?.[0] ?? OTHER.id;
     if (theme === OTHER.id && !sorting.themes.some((t) => t.id === OTHER.id)) other = true;
     themeOf[item.id] = theme;
@@ -213,6 +246,8 @@ export function completeSorting(sorting: Sorting, items: readonly Item[]): Sorti
     lines[item.id] = given !== undefined && given.length > 0 ? given : fallbackLines(item);
   }
   const used = new Set(Object.values(themeOf));
-  const themes = [...sorting.themes, ...(other ? [OTHER] : [])].filter((theme) => used.has(theme.id));
+  const themes = [...sorting.themes, ...(other ? [OTHER] : [])].filter((theme) =>
+    used.has(theme.id),
+  );
   return { themes, themeOf, lines, related: sorting.related, by: sorting.by };
 }

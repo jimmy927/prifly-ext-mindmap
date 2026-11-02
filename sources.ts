@@ -31,7 +31,13 @@ function isoDay(at: number): string {
 }
 
 export const SOURCES: readonly Source[] = [
-  { tool: "whatsapp_chats", service: "WhatsApp", kind: "conversation", everyMs: 5 * MINUTE, args: () => ({ limit: 30 }) },
+  {
+    tool: "whatsapp_chats",
+    service: "WhatsApp",
+    kind: "conversation",
+    everyMs: 5 * MINUTE,
+    args: () => ({ limit: 30 }),
+  },
   {
     tool: "gmail_search",
     service: "Gmail",
@@ -47,10 +53,22 @@ export const SOURCES: readonly Source[] = [
     everyMs: 5 * MINUTE,
     args: (now) => ({ query: `received>=${isoDay(now - RECENT_MS)}`, max: 30 }),
   },
-  { tool: "telegram_chats", service: "Telegram", kind: "conversation", everyMs: 5 * MINUTE, args: () => ({ limit: 30 }) },
+  {
+    tool: "telegram_chats",
+    service: "Telegram",
+    kind: "conversation",
+    everyMs: 5 * MINUTE,
+    args: () => ({ limit: 30 }),
+  },
   { tool: "trello_cards", service: "Trello", kind: "card", everyMs: 5 * MINUTE, args: () => ({}) },
   // Driven through the reader's browser: read less often.
-  { tool: "instagram_inbox", service: "Instagram", kind: "conversation", everyMs: 15 * MINUTE, args: () => ({}) },
+  {
+    tool: "instagram_inbox",
+    service: "Instagram",
+    kind: "conversation",
+    everyMs: 15 * MINUTE,
+    args: () => ({}),
+  },
   {
     tool: "linkedin_my_conversations",
     service: "LinkedIn",
@@ -58,7 +76,13 @@ export const SOURCES: readonly Source[] = [
     everyMs: 15 * MINUTE,
     args: () => ({}),
   },
-  { tool: "messenger_threads", service: "Messenger", kind: "conversation", everyMs: 15 * MINUTE, args: () => ({}) },
+  {
+    tool: "messenger_threads",
+    service: "Messenger",
+    kind: "conversation",
+    everyMs: 15 * MINUTE,
+    args: () => ({}),
+  },
 ];
 
 /** What a source last gave: its items, when it was read, and why it failed if it did. */
@@ -136,13 +160,16 @@ export class Sources {
     if (this.read === null) return [];
     return this.sources.flatMap((source) => {
       const error = this.reads.get(source.tool)?.error;
-      return error === undefined || error === null ? [] : [`${source.service} (${shortReason(error)})`];
+      return error === undefined || error === null
+        ? []
+        : [`${source.service} (${shortReason(error)})`];
     });
   }
 }
 
 function shortReason(message: string): string {
-  if (/not (?:found|installed|listed|in .*reads)|unknown tool|no such tool/i.test(message)) return "not installed";
+  if (/not (?:found|installed|listed|in .*reads)|unknown tool|no such tool/i.test(message))
+    return "not installed";
   const line = message.split("\n")[0] ?? message;
   return line.length > 60 ? `${line.slice(0, 57)}...` : line;
 }
@@ -152,12 +179,18 @@ function shortReason(message: string): string {
  * first, then any with a message in the last three days, newest first; at
  * most `MAX_CONVERSATIONS`.
  */
-export function keepConversations(items: readonly Item[], linked: ReadonlySet<string>, now: number): Item[] {
+export function keepConversations(
+  items: readonly Item[],
+  linked: ReadonlySet<string>,
+  now: number,
+): Item[] {
   const conversations = items.filter((item) => item.kind === "conversation");
   const newest = (a: Item, b: Item) => (b.last ?? 0) - (a.last ?? 0);
   const withLink = conversations.filter((item) => linked.has(item.id)).sort(newest);
   const recent = conversations
-    .filter((item) => !linked.has(item.id) && item.last !== undefined && now - item.last <= RECENT_MS)
+    .filter(
+      (item) => !linked.has(item.id) && item.last !== undefined && now - item.last <= RECENT_MS,
+    )
     .sort(newest);
   return [...withLink, ...recent].slice(0, MAX_CONVERSATIONS);
 }

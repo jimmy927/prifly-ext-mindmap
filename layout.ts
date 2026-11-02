@@ -50,19 +50,25 @@ export function orderThemes(
   for (const link of links) {
     const a = themeOf[link.a];
     const b = themeOf[link.b];
-    if (a !== undefined && b !== undefined && a !== b) weight.set(pair(a, b), (weight.get(pair(a, b)) ?? 0) + 1);
+    if (a !== undefined && b !== undefined && a !== b)
+      weight.set(pair(a, b), (weight.get(pair(a, b)) ?? 0) + 1);
   }
   const rank = (id: string) => {
     const i = previous.indexOf(id);
     return i === -1 ? previous.length + themes.indexOf(id) : i;
   };
-  const left = [...themes].sort((a, b) => (sizes.get(b) ?? 0) - (sizes.get(a) ?? 0) || rank(a) - rank(b));
+  const left = [...themes].sort(
+    (a, b) => (sizes.get(b) ?? 0) - (sizes.get(a) ?? 0) || rank(a) - rank(b),
+  );
   const order: string[] = [];
   let last = left.shift();
   while (last !== undefined) {
     order.push(last);
     const from = last;
-    left.sort((a, b) => (weight.get(pair(from, b)) ?? 0) - (weight.get(pair(from, a)) ?? 0) || rank(a) - rank(b));
+    left.sort(
+      (a, b) =>
+        (weight.get(pair(from, b)) ?? 0) - (weight.get(pair(from, a)) ?? 0) || rank(a) - rank(b),
+    );
     last = left.shift();
   }
   return order;
@@ -72,7 +78,10 @@ export function orderThemes(
 export function themePlaces(count: number): Point[] {
   return Array.from({ length: count }, (_, i) => {
     const angle = -Math.PI / 2 + (2 * Math.PI * i) / Math.max(1, count);
-    return { x: CENTRE.x + ELLIPSE.rx * Math.cos(angle), y: CENTRE.y + ELLIPSE.ry * Math.sin(angle) };
+    return {
+      x: CENTRE.x + ELLIPSE.rx * Math.cos(angle),
+      y: CENTRE.y + ELLIPSE.ry * Math.sin(angle),
+    };
   });
 }
 
@@ -114,10 +123,30 @@ function clamp(node: Node): void {
 function startNodes(input: LayoutInput): { fixed: Node[]; members: Node[] } {
   const places = themePlaces(input.themes.length);
   const themeNodes = new Map<string, Node>();
-  const fixed: Node[] = [{ id: "root", r: ROOT_R, home: CENTRE, fixed: true, x: CENTRE.x, y: CENTRE.y, fx: CENTRE.x, fy: CENTRE.y }];
+  const fixed: Node[] = [
+    {
+      id: "root",
+      r: ROOT_R,
+      home: CENTRE,
+      fixed: true,
+      x: CENTRE.x,
+      y: CENTRE.y,
+      fx: CENTRE.x,
+      fy: CENTRE.y,
+    },
+  ];
   input.themes.forEach((id, i) => {
     const at = places[i] ?? CENTRE;
-    const node: Node = { id, r: THEME_R, home: at, fixed: true, x: at.x, y: at.y, fx: at.x, fy: at.y };
+    const node: Node = {
+      id,
+      r: THEME_R,
+      home: at,
+      fixed: true,
+      x: at.x,
+      y: at.y,
+      fx: at.x,
+      fy: at.y,
+    };
     themeNodes.set(id, node);
     fixed.push(node);
   });
@@ -158,6 +187,12 @@ function separate(nodes: Node[]): void {
   }
 }
 
+function nudge(node: Node, dx: number, dy: number): void {
+  if (node.fixed) return;
+  node.x = (node.x ?? 0) + dx;
+  node.y = (node.y ?? 0) + dy;
+}
+
 function pushApart(a: Node | undefined, b: Node | undefined): boolean {
   if (a === undefined || b === undefined || (a.fixed && b.fixed)) return false;
   const dx = (b.x ?? 0) - (a.x ?? 0);
@@ -165,16 +200,9 @@ function pushApart(a: Node | undefined, b: Node | undefined): boolean {
   const distance = Math.hypot(dx, dy) || 0.01;
   const need = a.r + b.r + 2;
   if (distance >= need) return false;
-  const push = (need - distance) / distance;
-  const share = a.fixed || b.fixed ? 1 : 0.5;
-  if (!a.fixed) {
-    a.x = (a.x ?? 0) - dx * push * share;
-    a.y = (a.y ?? 0) - dy * push * share;
-  }
-  if (!b.fixed) {
-    b.x = (b.x ?? 0) + dx * push * share;
-    b.y = (b.y ?? 0) + dy * push * share;
-  }
+  const push = ((need - distance) / distance) * (a.fixed || b.fixed ? 1 : 0.5);
+  nudge(a, -dx * push, -dy * push);
+  nudge(b, dx * push, dy * push);
   return true;
 }
 
@@ -193,17 +221,31 @@ export function layout(input: LayoutInput): LayoutResult {
     .randomSource(seeded(nodes.length * 7919 + 17))
     .alpha(seededAll ? 0.3 : 1)
     .force("link", forceLink<Node, SimulationLinkDatum<Node>>(links).distance(132).strength(0.9))
-    .force("collide", forceCollide<Node>((node) => node.r + GAP))
+    .force(
+      "collide",
+      forceCollide<Node>((node) => node.r + GAP),
+    )
     .force("charge", forceManyBody<Node>().strength(-40))
-    .force("x", forceX<Node>((node) => node.home.x).strength((node) => (node.fixed ? 0 : 0.06)))
-    .force("y", forceY<Node>((node) => node.home.y).strength((node) => (node.fixed ? 0 : 0.06)))
+    .force(
+      "x",
+      forceX<Node>((node) => node.home.x).strength((node) => (node.fixed ? 0 : 0.06)),
+    )
+    .force(
+      "y",
+      forceY<Node>((node) => node.home.y).strength((node) => (node.fixed ? 0 : 0.06)),
+    )
     .stop();
   for (let i = 0; i < TICKS; i++) {
     simulation.tick();
     for (const node of members) clamp(node);
   }
   separate(nodes);
-  const place = (node: Node): Placed => ({ id: node.id, r: node.r, x: round(node.x), y: round(node.y) });
+  const place = (node: Node): Placed => ({
+    id: node.id,
+    r: node.r,
+    x: round(node.x),
+    y: round(node.y),
+  });
   return { themes: fixed.slice(1).map(place), members: members.map(place) };
 }
 

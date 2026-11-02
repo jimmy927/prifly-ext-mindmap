@@ -1,6 +1,8 @@
 ---
+
 setup:
-  - bun install --frozen-lockfile
+- bun install --frozen-lockfile
+
 ---
 
 A prifly extension built with bun: `bun install` brings in its dependencies (`d3-force`, `zod`,

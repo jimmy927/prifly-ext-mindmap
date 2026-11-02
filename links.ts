@@ -25,25 +25,34 @@ export function knownLinks(items: readonly Item[]): Link[] {
     seen.add(key);
     links.push(link);
   };
-  for (const item of items) {
-    if (item.parentId !== undefined) {
-      const parent = sessionWith(item.parentId, sessions);
-      if (parent !== null) add({ a: parent.id, b: item.id, kind: "started", label: "started" });
-    }
-    for (const id of item.waitsOn ?? []) {
-      const other = sessionWith(id, sessions);
-      if (other !== null) add({ a: item.id, b: other.id, kind: "waits on", label: "waits on" });
-    }
-    if (item.kind === "card" && item.sessionId !== undefined) {
-      const session = sessionWith(item.sessionId, sessions);
-      if (session !== null) add({ a: item.id, b: session.id, kind: "ticket", label: "ticket" });
-    }
+  for (const item of items) for (const link of linksOf(item, sessions)) add(link);
+  return links;
+}
+
+/** One item's own solid links: from the session that started it, to those it waits on, to its card's session. */
+function linksOf(item: Item, sessions: readonly Item[]): Link[] {
+  const links: Link[] = [];
+  const parent = item.parentId === undefined ? null : sessionWith(item.parentId, sessions);
+  if (parent !== null) links.push({ a: parent.id, b: item.id, kind: "started", label: "started" });
+  for (const id of item.waitsOn ?? []) {
+    const other = sessionWith(id, sessions);
+    if (other !== null)
+      links.push({ a: item.id, b: other.id, kind: "waits on", label: "waits on" });
   }
+  const ticket =
+    item.kind === "card" && item.sessionId !== undefined
+      ? sessionWith(item.sessionId, sessions)
+      : null;
+  if (ticket !== null) links.push({ a: item.id, b: ticket.id, kind: "ticket", label: "ticket" });
   return links;
 }
 
 /** The model's related links between items on the map, minus pairs a known link already joins. */
-export function relatedLinks(items: readonly Item[], sorting: Sorting, known: readonly Link[]): Link[] {
+export function relatedLinks(
+  items: readonly Item[],
+  sorting: Sorting,
+  known: readonly Link[],
+): Link[] {
   const ids = new Set(items.map((item) => item.id));
   const joined = new Set(known.flatMap((link) => [`${link.a}|${link.b}`, `${link.b}|${link.a}`]));
   const links: Link[] = [];

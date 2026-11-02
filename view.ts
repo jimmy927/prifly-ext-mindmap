@@ -4,7 +4,7 @@
  * only draws this and animates from the last one.
  */
 
-import { branchBend, type Box, type Circle, placeLabel } from "./curves";
+import { type Box, branchBend, type Circle, placeLabel } from "./curves";
 import { CENTRE, FRAME, layout, orderThemes, type Point, ROOT_R, radiusOf } from "./layout";
 import type { Item, Link, LinkKind, Sorting, Status } from "./types";
 
@@ -31,7 +31,14 @@ export const SERVICE_COLOURS: Record<string, string> = {
   Trello: "#0079bf",
 };
 
-export type ViewTheme = Point & { id: string; name: string; sub: string; color: string; r: number; bend: number };
+export type ViewTheme = Point & {
+  id: string;
+  name: string;
+  sub: string;
+  color: string;
+  r: number;
+  bend: number;
+};
 export type ViewNode = Point & {
   id: string;
   kind: Item["kind"];
@@ -62,7 +69,13 @@ export type MapView = {
   nodes: ViewNode[];
   links: ViewLink[];
   legend: { services: { name: string; color: string }[] };
-  footer: { model: string; skipped: string[]; sessions: number; conversations: number; cards: number };
+  footer: {
+    model: string;
+    skipped: string[];
+    sessions: number;
+    conversations: number;
+    cards: number;
+  };
 };
 
 /** The colours themes keep across updates: a new theme takes the first colour no theme now has. */
@@ -121,7 +134,15 @@ function placeLinks(links: readonly Link[], circles: Map<string, Circle>): ViewL
     if (a === undefined || b === undefined) return [];
     const base = link.kind === "related" ? 0.18 : 0.1;
     const spot = placeLabel(a, b, base, link.label, all, placed);
-    return [{ a: link.a, b: link.b, kind: link.kind, bend: spot.bend, label: { ...spot.at, text: spot.text } }];
+    return [
+      {
+        a: link.a,
+        b: link.b,
+        kind: link.kind,
+        bend: spot.bend,
+        label: { ...spot.at, text: spot.text },
+      },
+    ];
   });
 }
 
@@ -167,14 +188,18 @@ export function buildView(input: ViewInput): {
     ...themes.map((t): [string, Circle] => [t.id, t]),
     ...nodes.map((n): [string, Circle] => [n.id, n]),
   ]);
-  const services = [...new Set(nodes.flatMap((node) => (node.service === undefined ? [] : [node.service])))];
+  const services = [
+    ...new Set(nodes.flatMap((node) => (node.service === undefined ? [] : [node.service]))),
+  ];
   const view: MapView = {
     frame: { ...FRAME },
     root: { ...CENTRE, r: ROOT_R, label: "all sessions" },
     themes,
     nodes,
     links: placeLinks(input.links, circles),
-    legend: { services: services.map((name) => ({ name, color: SERVICE_COLOURS[name] ?? "#6b7280" })) },
+    legend: {
+      services: services.map((name) => ({ name, color: SERVICE_COLOURS[name] ?? "#6b7280" })),
+    },
     footer: input.footer,
   };
   return { view, order, colours };

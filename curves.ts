@@ -22,7 +22,10 @@ export function control(a: Point, b: Point, bend: number): Point {
 export function pointAt(a: Point, b: Point, bend: number, t: number): Point {
   const c = control(a, b, bend);
   const u = 1 - t;
-  return { x: u * u * a.x + 2 * u * t * c.x + t * t * b.x, y: u * u * a.y + 2 * u * t * c.y + t * t * b.y };
+  return {
+    x: u * u * a.x + 2 * u * t * c.x + t * t * b.x,
+    y: u * u * a.y + 2 * u * t * c.y + t * t * b.y,
+  };
 }
 
 /** A stable number in [0, 1) from a text. */
