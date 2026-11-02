@@ -125,9 +125,70 @@ describe("asking the model", () => {
     expect(s.sortingFor(items()).by).toBe("fallback");
     expect(s.statusLine()).toContain("failed");
   });
+
+  test("a key added later is used for the same items after a minute", async () => {
+    let key: string | null = null;
+    const calls: number[] = [];
+    const s = new Sorter({
+      key: async () => key,
+      chat: async () => {
+        calls.push(1);
+        return answerFor();
+      },
+    });
+    await s.update(items(), 0);
+    expect(calls.length).toBe(0);
+    key = "k";
+    await s.update(items(), MIN_GAP_MS - 1);
+    expect(calls.length).toBe(0);
+    await s.update(items(), MIN_GAP_MS);
+    expect(calls.length).toBe(1);
+    expect(s.sortingFor(items()).by).toStartWith("model");
+  });
+
+  test("a failed call is tried again for the same items after a minute, then not again", async () => {
+    let fail = true;
+    const calls: number[] = [];
+    const s = new Sorter({
+      key: async () => "k",
+      chat: async () => {
+        calls.push(1);
+        if (fail) throw new Error("timed out");
+        return answerFor();
+      },
+    });
+    await s.update(items(), 0);
+    fail = false;
+    await s.update(items(), MIN_GAP_MS);
+    expect(calls.length).toBe(2);
+    expect(s.sortingFor(items()).by).toStartWith("model");
+    await s.update(items(), MIN_GAP_MS * 3);
+    expect(calls.length).toBe(2);
+  });
 });
 
 describe("reading the model's answer", () => {
+  test("two sessions sharing their first 8 characters keep their own answers", () => {
+    const twins = [
+      item({ id: "abcdabcd-1111-4000-8000-000000000000" }),
+      item({ id: "abcdabcd-2222-4000-8000-000000000000" }),
+    ];
+    const answer = JSON.stringify({
+      themes: [
+        { id: "t1", name: "One", sub: "" },
+        { id: "t2", name: "Two", sub: "" },
+      ],
+      items: twins.map((twin, i) => ({
+        id: shortIds(twins).get(twin.id),
+        theme: `t${i + 1}`,
+        lines: [],
+      })),
+    });
+    const sorting = parseAnswer(answer, twins, "m");
+    expect(sorting?.themeOf[twins[0]?.id ?? ""]).toBe("t1");
+    expect(sorting?.themeOf[twins[1]?.id ?? ""]).toBe("t2");
+  });
+
   test("a valid answer gives themes, lines and related links by full id", () => {
     const sorting = parseAnswer(answerFor(), items(), "m");
     expect(sorting?.themes.map((t) => t.name)).toEqual(["Shop", "Books"]);

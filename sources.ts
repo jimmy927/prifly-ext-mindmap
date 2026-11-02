@@ -108,15 +108,16 @@ function itemOf(source: Source, entry: Entry): Item {
 }
 
 /**
- * One source's answer as items. A throw is the source failing. Cards come as
- * JSON (`trello_cards`): plain text in their place is the tool saying why it
- * has none ("Trello is not connected"), and is taken as a failure.
+ * One source's answer as items. A throw is the source failing. Text that
+ * lists nothing and is not JSON is the tool saying why it has nothing ("Not
+ * signed in.", "Trello is not connected"), and is taken as a failure, so the
+ * footer names it.
  */
 export async function readSource(read: ReadTool, source: Source, now: number): Promise<Item[]> {
   const raw = await read(source.tool, source.args(now));
   const entries = parseListing(raw, source.columns);
   const text = raw.trim();
-  if (source.kind === "card" && entries.length === 0 && text !== "" && !/^[[{]/.test(text)) {
+  if (entries.length === 0 && text !== "" && !/^[[{]/.test(text)) {
     throw new Error(text.split("\n")[0] ?? text);
   }
   return entries.map((entry) => itemOf(source, entry));

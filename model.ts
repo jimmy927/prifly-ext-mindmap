@@ -62,7 +62,11 @@ export type ModelStatus = "model" | "no key" | "failed" | "waiting";
 
 export class Sorter {
   private saved: Saved | null = null;
-  /** The fingerprint last asked about (answered or not), and when. */
+  /**
+   * The fingerprint the model last answered for, and when it was last tried
+   * (answered, failed or without a key). Until it answers for the items now —
+   * no key yet, or a failed call — it is tried again once a minute.
+   */
   private askedFor = "";
   private askedAt = Number.NEGATIVE_INFINITY;
   private busy = false;
@@ -85,24 +89,27 @@ export class Sorter {
     }
   }
 
-  /** Whether `update` would ask the model now. */
+  /**
+   * Whether `update` would ask the model now: it has not answered for these
+   * items (they changed, or the last try had no key or failed), and a minute
+   * has passed since the last try.
+   */
   due(items: readonly Item[], now: number): boolean {
     return !this.busy && fingerprint(items) !== this.askedFor && now - this.askedAt >= MIN_GAP_MS;
   }
 
-  /** Ask the model when the items changed and a minute has passed since the last ask. */
+  /** Ask the model when it is due; see `due`. */
   async update(items: readonly Item[], now: number): Promise<void> {
     if (items.length === 0 || !this.due(items, now)) return;
     const print = fingerprint(items);
     this.busy = true;
-    this.askedFor = print;
+    this.askedAt = now;
     try {
       const key = await this.deps.key();
       if (key === null || key === "") {
         this.status = "no key";
         return;
       }
-      this.askedAt = now;
       await this.ask(key, items, print, now);
     } finally {
       this.busy = false;
@@ -125,6 +132,7 @@ export class Sorter {
       const sorting = parseAnswer(text, items, this.model);
       if (sorting === null) throw new Error("the answer was not a valid sorting");
       this.saved = { fingerprint: print, at: now, sorting };
+      this.askedFor = print;
       this.status = "model";
       this.deps.log?.("sorted", {
         items: items.length,

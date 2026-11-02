@@ -164,7 +164,8 @@ const LOOK = {
   "--border": "--border",
 };
 addEventListener("message", (event) => {
-  if (event.data?.type !== "prifly-look") return;
+  // Only the window this page is shown in sets its look.
+  if (event.source !== parent || event.data?.type !== "prifly-look") return;
   document.documentElement.classList.toggle("dark", event.data.dark === true);
   for (const [theirs, ours] of Object.entries(LOOK)) {
     const value = event.data.tokens?.[theirs];

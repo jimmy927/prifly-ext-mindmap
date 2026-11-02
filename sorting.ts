@@ -39,9 +39,18 @@ export function shortIds(items: readonly Item[]): Map<string, string> {
   const ids = new Map<string, string>();
   let c = 0;
   let k = 0;
+  const prefixes = new Map<string, number>();
   for (const item of items) {
-    if (item.kind === "session") ids.set(item.id, item.id.slice(0, 8));
-    else if (item.kind === "conversation") ids.set(item.id, `c${++c}`);
+    if (item.kind !== "session") continue;
+    const prefix = item.id.slice(0, 8).toLowerCase();
+    prefixes.set(prefix, (prefixes.get(prefix) ?? 0) + 1);
+  }
+  for (const item of items) {
+    if (item.kind === "session") {
+      // Two sessions sharing a start are sent by their whole ids, so neither takes the other's answer.
+      const prefix = item.id.slice(0, 8);
+      ids.set(item.id, prefixes.get(prefix.toLowerCase()) === 1 ? prefix : item.id);
+    } else if (item.kind === "conversation") ids.set(item.id, `c${++c}`);
     else ids.set(item.id, `k${++k}`);
   }
   return ids;

@@ -152,6 +152,13 @@ describe("the sources", () => {
     expect(calls).toEqual(["whatsapp_chats", "instagram_inbox", "whatsapp_chats"]);
   });
 
+  test("a chat tool answering with an error as text is named, not read as no chats", async () => {
+    const s = new Sources(async () => "Not signed in.", sources);
+    await s.refresh(NOW);
+    expect(s.items()).toEqual([]);
+    expect(s.skipped()).toEqual(["WhatsApp (Not signed in.)", "Instagram (Not signed in.)"]);
+  });
+
   test("without read tools nothing is read and nothing is named", async () => {
     const s = new Sources(null, sources);
     await s.refresh(NOW);

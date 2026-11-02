@@ -2,7 +2,11 @@
 
 import type { FactSession, Item, Status } from "./types";
 
-/** At most this many sessions are drawn: the live ones first, then the latest ended. */
+/**
+ * At most this many sessions are drawn: the live ones first, then the ended
+ * ones in the order `api.sessions()` gives them (a session carries no time to
+ * sort by).
+ */
 export const MAX_SESSIONS = 40;
 
 /** The folder prifly's summariser runs its folds in (`foldHome` in prifly's session-summary.ts). */
