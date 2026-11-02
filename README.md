@@ -98,7 +98,7 @@ kept in `api.state`, so a restart still shows it.
   DeepInfra's HTTP status and short message. The page keeps asking, the
   extension tries DeepInfra again once a minute, and the map appears on its own
   once the calls succeed.
-- **After a good map**: a failing call, or a missing key, leaves the last good
+- **After a good map**: a failing call or a missing key, met when a call is due, leaves the last good
   map on screen as it was (positions, themes, names), with the error in the
   footer and when the map was last updated ("Last updated 14:32"). A change in
   the items, such as a new session, shows once its embedding and name have

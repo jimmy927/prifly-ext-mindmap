@@ -133,7 +133,7 @@ function drawFooter(answer) {
   footer.replaceChildren();
   if (!answer.current) {
     const note = document.createElement("span");
-    note.className = answer.error ? "alert" : "";
+    note.className = answer.error ? "note alert" : "note";
     note.textContent = [answer.error?.text, `Last updated ${clock(answer.updatedAt)}`]
       .filter(Boolean)
       .join(" · ");
