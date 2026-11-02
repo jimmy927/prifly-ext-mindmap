@@ -73,16 +73,36 @@ Themes are topic clusters, worked out in three steps:
    in its last topic and is a little sticky there, so one new item does not
    reshuffle the map, and a topic keeps its id while most of its members stay.
    An item with no edge joins the nearest topic by embedding, or its
-   repository's.
+   repository's. The saved topics record which embedding model they were built
+   with. Topics saved by a run without these embeddings (an older version, or
+   another model) are not a seed: that run is a fresh Louvain run, so the
+   embeddings can move items out of a topic they were stuck in, the topics get
+   new ids, they are named anew, and the result is saved with the model. Every
+   later run is sticky again.
 
 The model only names: `google/gemma-4-26B-A4B-it` on DeepInfra gets one short
 call per new or changed topic, with its members' titles, brief lines, subjects
 and the start of the last message, and answers the theme's name, a line under
 it, two summary lines per member and labels for the pairs only embeddings tie.
 The answer is checked with zod and kept in `api.state`; a topic keeps its name
-while its members barely change. Measured on 28 real sessions and 60 listed chats and
-mails, a first refresh (87 distinct texts embedded, 48 items drawn, 6 topics named in parallel) took
-about 6 s and cost about $0.0006; later refreshes send only what changed.
+while its members barely change.
+
+The prompt carries rules for the names and lines, and `rules.ts` checks them
+after parsing. Topics are named one after another and each call is sent the
+other themes' names. A theme name is bad when it shares its main word (any
+subject word of three letters or more, leaving out filler such as "project" or
+"support") with another theme's name, or is a catch-all ("Mixed", "Misc",
+"Other", "General", "Various", "Activity", "Personal and Work"). A summary line
+is bad when it equals, starts, or sits inside its item's title (case and
+punctuation ignored), or is generic ("Person contact", "Message from"). A bad
+part sends the topic back to the model once with the reason. If a bad part
+remains, the topic keeps its last good name (with no earlier name, an overlap
+is kept and a catch-all leaves the topic unnamed, to be asked again), and a bad
+line is left out, so the circle shows none rather than a repeat of its title.
+Measured before the naming was made one at a time, on 28 real sessions and 60
+listed chats and mails, a first refresh (87 distinct texts embedded, 48 items
+drawn, 6 topics named in parallel) took about 6 s and cost about $0.0006; later
+refreshes send only what changed.
 
 It needs a DeepInfra key in prifly's vault: an `api-token` entry named
 `deepinfra` (or `deepinfra-api`) at level 1, the one level an extension can read.

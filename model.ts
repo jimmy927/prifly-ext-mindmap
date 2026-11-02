@@ -5,14 +5,16 @@
  * labels for the pairs only embeddings tie. At most one round of calls a
  * minute; answers are kept in `api.state`. A topic keeps its name while its
  * members barely change. No key, a failed call or a bad answer: nothing is
- * named, and `error` says why.
+ * named, and `error` says why. A name or line that breaks the rules in
+ * `rules.ts` is asked for once more with the reason (see `asked`).
  */
 
 import type { ExtensionStateApi } from "@prifly/extension-api";
 import { type Failure, failedResponse, failureOf, noKeyFailure } from "./deepinfra";
 import { embedText, textHash } from "./embed";
 import { commonEntity, type Entity, pairKey } from "./entities";
-import { namePrompt, parseNaming } from "./sorting";
+import { type NameProblem, nameProblem, type Review, reasons, review } from "./rules";
+import { type NamePrompt, type Naming, namePrompt, parseNaming } from "./sorting";
 import type { Item, Theme } from "./types";
 
 export const MODEL = "google/gemma-4-26B-A4B-it";
@@ -103,7 +105,12 @@ export class Namer {
   private named(topic: TopicInfo): Named | null {
     const named = this.saved.topics[topic.id];
     const ids = topic.members.map((m) => m.id);
-    return named !== undefined && jaccard(named.members, ids) >= KEEP_NAME ? named : null;
+    // A catch-all name is not kept, whenever it was given.
+    return named !== undefined &&
+      jaccard(named.members, ids) >= KEEP_NAME &&
+      nameProblem(named.name, [])?.kind !== "catch-all"
+      ? named
+      : null;
   }
 
   /** A topic with no name, members much changed, a member without fresh lines, or a pair without a label. */
@@ -122,7 +129,7 @@ export class Namer {
     return !this.busy && now - this.askedAt >= MIN_GAP_MS && topics.some((t) => this.isDue(t));
   }
 
-  /** Name the due topics, one call each, all at once; see `due`. */
+  /** Name the due topics, one call each (two when a part of the answer breaks a rule), one after another; see `due`. */
   async update(
     topics: readonly TopicInfo[],
     entities: ReadonlyMap<string, readonly Entity[]>,
@@ -139,7 +146,9 @@ export class Namer {
       }
       const due = topics.filter((t) => this.isDue(t));
       const started = Date.now();
-      const results = await Promise.all(due.map((t) => this.name(key, t, entities)));
+      // One after the other, so each topic is told the names the others have by then.
+      const results: (Failure | null)[] = [];
+      for (const t of due) results.push(await this.name(key, t, entities, this.othersOf(t, topics)));
       const failures = results.filter((result) => result !== null);
       // A failed topic stays unnamed and is asked again; the others are kept.
       this.failure = failures[0] ?? null;
@@ -155,11 +164,86 @@ export class Namer {
     }
   }
 
+  /** The names of the other topics that have one now. */
+  private othersOf(topic: TopicInfo, topics: readonly TopicInfo[]): string[] {
+    return topics.flatMap((t) => (t.id === topic.id ? [] : (this.named(t)?.name ?? [])));
+  }
+
+  /** One call and its answer read; throws when the call failed or the answer is no valid naming. */
+  private async ask(
+    key: string,
+    members: readonly Item[],
+    messages: NamePrompt,
+  ): Promise<{ text: string; naming: Naming }> {
+    const text = await this.deps.chat(key, this.model, messages);
+    const naming = parseNaming(text, members);
+    if (naming === null)
+      // Its length only: the answer summarises private chats and mails.
+      throw new Error(`the answer (${text.length} characters) was not a valid naming`);
+    return { text, naming };
+  }
+
+  /**
+   * The model's answer, checked against the naming rules; when a part is bad,
+   * asked once more with the reasons, and the second answer is the one kept
+   * (an unusable second answer leaves the first).
+   */
+  private async asked(
+    key: string,
+    topic: TopicInfo,
+    messages: NamePrompt,
+    others: readonly string[],
+    checkName: boolean,
+  ): Promise<{ naming: Naming; checked: Review }> {
+    const first = await this.ask(key, topic.members, messages);
+    const checked = review(first.naming, topic.members, others, checkName);
+    const bad = reasons(checked);
+    if (bad.length === 0) return { naming: first.naming, checked };
+    const again: NamePrompt = [
+      ...messages,
+      { role: "assistant", content: first.text },
+      {
+        role: "user",
+        content: `Not accepted: ${bad.join("; ")}. Answer again with the same JSON, fixing only that.`,
+      },
+    ];
+    try {
+      const second = await this.ask(key, topic.members, again);
+      const rechecked = review(second.naming, topic.members, others, checkName);
+      return { naming: second.naming, checked: rechecked };
+    } catch (error) {
+      this.deps.log?.("retry_failed", {
+        topic: topic.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { naming: first.naming, checked };
+    }
+  }
+
+  /**
+   * The theme's name and sub: the answer's when it passed; else the topic's
+   * last good name; else, for an overlap only, the answer's. A catch-all with
+   * nothing better is no name: the topic stays unnamed and is asked again.
+   */
+  private chosen(
+    topic: TopicInfo,
+    naming: Naming,
+    problem: NameProblem | null,
+    others: readonly string[],
+  ): { name: string; sub: string } {
+    if (problem === null) return { name: naming.name, sub: naming.sub };
+    const last = this.saved.topics[topic.id];
+    if (last !== undefined && nameProblem(last.name, others) === null) return last;
+    if (problem.kind === "overlap") return { name: naming.name, sub: naming.sub };
+    throw new Error("the name was a catch-all, and the topic has no earlier name");
+  }
+
   /** One topic's call. Why it failed when it did, or its answer was no valid naming; else null. */
   private async name(
     key: string,
     topic: TopicInfo,
     entities: ReadonlyMap<string, readonly Entity[]>,
+    others: readonly string[],
   ): Promise<Failure | null> {
     const kept = this.named(topic);
     // What the members share goes to the model as a hint; it names nothing by itself.
@@ -167,22 +251,17 @@ export class Namer {
     const shared = common === null ? [] : [common];
     const keep = kept === null ? null : { id: topic.id, name: kept.name, sub: kept.sub };
     try {
-      const text = await this.deps.chat(
-        key,
-        this.model,
-        namePrompt(topic.members, shared, topic.pairs, keep),
-      );
-      const naming = parseNaming(text, topic.members);
-      if (naming === null)
-        // Its length only: the answer summarises private chats and mails.
-        throw new Error(`the answer (${text.length} characters) was not a valid naming`);
+      const messages = namePrompt(topic.members, shared, topic.pairs, keep, others);
+      const { naming, checked } = await this.asked(key, topic, messages, others, kept === null);
+      const theme = kept ?? this.chosen(topic, naming, checked.name, others);
       this.saved.topics[topic.id] = {
         members: topic.members.map((m) => m.id),
-        name: kept?.name ?? naming.name,
-        sub: kept?.sub ?? naming.sub,
+        name: theme.name,
+        sub: theme.sub,
       };
       for (const member of topic.members) {
-        const lines = naming.lines.get(member.id) ?? [];
+        // A line that repeated the title is left out: none is better than a repeat.
+        const lines = checked.lines.get(member.id) ?? [];
         this.saved.lines[member.id] = { hash: hashOf(member), lines };
       }
       for (const [a, b] of topic.pairs) {

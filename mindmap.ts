@@ -62,7 +62,8 @@ function shortModel(model: string): string {
   return model.split("/").at(-1) ?? model;
 }
 
-type SavedTopics = { topicOf: Record<string, string>; nextId: number };
+/** `embedModel`: the embedding model the topics were built with; absent when built without embeddings. */
+type SavedTopics = { topicOf: Record<string, string>; nextId: number; embedModel?: string };
 type SavedMap = { view: MapView; at: number };
 
 export class MindMap {
@@ -72,6 +73,8 @@ export class MindMap {
   readonly embedder: Embedder;
   readonly namer: Namer;
   private seeds = new Map<string, string>();
+  /** The embedding model the seeds were built with; null for none (an older save), which no model matches. */
+  private seedsModel: string | null = null;
   private nextId = 1;
   private worked: { key: string; worked: Worked } | null = null;
   private positions = new Map<string, Point>();
@@ -107,6 +110,7 @@ export class MindMap {
     if (saved?.topicOf !== undefined && typeof saved.nextId === "number") {
       this.seeds = new Map(Object.entries(saved.topicOf));
       this.nextId = saved.nextId;
+      this.seedsModel = typeof saved.embedModel === "string" ? saved.embedModel : null;
     }
     const map = await state?.get<SavedMap>(MAP_STATE).catch(() => undefined);
     if (map !== undefined && Array.isArray(map.view?.nodes) && typeof map.at === "number") {
@@ -146,14 +150,20 @@ export class MindMap {
       sessions: this.sessions,
       others: this.sources.items(),
       vectorOf: (item) => this.embedder.vectorOf(item),
-      previous: this.seeds,
+      // Topics built without these embeddings are not sticky: a fresh run, with new topic ids.
+      previous: this.seedsModel === this.embedder.model ? this.seeds : new Map(),
       nextId: this.nextId,
       now,
     });
     this.worked = { key, worked };
     this.seeds = worked.topicOf;
+    this.seedsModel = this.embedder.model;
     this.nextId = worked.nextId;
-    const saved: SavedTopics = { topicOf: Object.fromEntries(worked.topicOf), nextId: this.nextId };
+    const saved: SavedTopics = {
+      topicOf: Object.fromEntries(worked.topicOf),
+      nextId: this.nextId,
+      embedModel: this.embedder.model,
+    };
     void this.api.state?.set(TOPICS_STATE, saved).catch(() => undefined);
     return worked;
   }

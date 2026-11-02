@@ -310,3 +310,78 @@ test("a restart shows the last good map with its time, and the error when the ke
     text: NO_KEY_TEXT,
   });
 });
+
+const EMBED_MODEL = "google/embeddinggemma-300m";
+
+/** Two groups of sessions the embeddings tell apart: "alpha" ones along x, "beta" ones along y. */
+function twoGroups(): { options: FakeOptions; ids: Record<string, string>; deps: MindMapDeps } {
+  const shop = "/home/ada/src/shop";
+  const books = "/home/ada/src/books";
+  const made = [
+    session({ title: "alpha 1", cwd: shop, state: "idle" }),
+    session({ title: "alpha 2", cwd: shop, state: "idle" }),
+    session({ title: "alpha 3", cwd: shop, state: "idle" }),
+    session({ title: "beta 1", cwd: books, state: "idle" }),
+    session({ title: "beta 2", cwd: books, state: "idle" }),
+    session({ title: "beta 3", cwd: books, state: "idle" }),
+  ];
+  const ids = Object.fromEntries(made.map((s) => [s.title, s.id]));
+  const embed: Embed = async (_key, _model, texts) =>
+    texts.map((text) => (text.includes("alpha") ? [1, 0, 0] : [0, 1, 0]));
+  let named = 0;
+  const chat: Chat = async (_key, _model, messages) => {
+    const payload = JSON.parse(messages[1]?.content ?? "{}") as { items: { id: string }[] };
+    named += 1;
+    return JSON.stringify({
+      name: `Subject${String.fromCharCode(96 + named)}`,
+      sub: "named by the model",
+      items: payload.items.map((i) => ({ id: i.id, lines: ["line one", "line two"] })),
+      pairs: [],
+    });
+  };
+  return { options: { sessions: made }, ids, deps: { embed, chat } };
+}
+
+/** Last time's topics: beta 3 sat with the alpha sessions. */
+function oldTopics(ids: Record<string, string>) {
+  const topicOf = Object.fromEntries(
+    Object.entries(ids).map(([title, id]) => [id, title.startsWith("beta") && title !== "beta 3" ? "t2" : "t1"]),
+  );
+  return { topicOf, nextId: 3 };
+}
+
+function themeOf(view: MapAnswer, id: string | undefined): string | undefined {
+  return goodMap(view).map.nodes.find((n) => n.id === id)?.theme;
+}
+
+async function mapWith(saved: object) {
+  const { options, ids, deps } = twoGroups();
+  const api = fakeApi({ ...options, key: "k" });
+  await api.state?.set("topics", { ...oldTopics(ids), ...saved });
+  const map = new MindMap(api, deps);
+  await map.load();
+  return { api, ids, view: await settled(map, NOW) };
+}
+
+test("topics saved without embeddings are not sticky: a fresh run moves an item to where its embedding fits, with new ids", async () => {
+  const { api, ids, view } = await mapWith({});
+  expect(themeOf(view, ids["beta 3"])).toBe(themeOf(view, ids["beta 1"]));
+  expect(themeOf(view, ids["beta 3"])).not.toBe(themeOf(view, ids["alpha 1"]));
+  expect(goodMap(view).map.themes.some((t) => t.id === "t1" || t.id === "t2")).toBe(false);
+  // Saved with the model, so the next run is sticky.
+  await new Promise((done) => setTimeout(done, 0));
+  expect(await api.state?.get("topics")).toMatchObject({ embedModel: EMBED_MODEL });
+});
+
+test("topics saved with this embedding model are sticky, as before: the ids are kept", async () => {
+  const { ids, view } = await mapWith({ embedModel: EMBED_MODEL });
+  expect(goodMap(view).map.themes.every((t) => t.id === "t1" || t.id === "t2")).toBe(true);
+  expect(themeOf(view, ids["alpha 1"])).toBe("t1");
+  expect(themeOf(view, ids["beta 1"])).toBe("t2");
+});
+
+test("topics saved with another embedding model are rebuilt too", async () => {
+  const { ids, view } = await mapWith({ embedModel: "some/older-model" });
+  expect(themeOf(view, ids["beta 3"])).toBe(themeOf(view, ids["beta 1"]));
+  expect(goodMap(view).map.themes.some((t) => t.id === "t1" || t.id === "t2")).toBe(false);
+});
