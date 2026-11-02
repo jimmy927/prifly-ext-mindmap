@@ -1,0 +1,28 @@
+{
+  "id": "mindmap",
+  "name": "Mind map",
+  "description": "A live radial mind map of your prifly sessions, the conversations they are about and their Trello cards, sorted into themes and linked.",
+  "version": "0.1.0",
+  "main": "index.ts",
+  "vault": ["deepinfra", "deepinfra-api"],
+  "reads": [
+    "whatsapp_chats",
+    "gmail_search",
+    "outlook_search",
+    "telegram_chats",
+    "instagram_inbox",
+    "linkedin_my_conversations",
+    "messenger_threads",
+    "trello_cards"
+  ],
+  "panels": [
+    {
+      "id": "map",
+      "label": "Mind map",
+      "icon": "link",
+      "description": "Your sessions, conversations and cards as one map",
+      "folder": "panel",
+      "page": "index.html"
+    }
+  ]
+}
