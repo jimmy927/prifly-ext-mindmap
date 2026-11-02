@@ -216,10 +216,13 @@ export function layout(input: LayoutInput): LayoutResult {
     const target = byId.get(member.theme);
     return source !== undefined && target !== undefined ? [{ source, target }] : [];
   });
-  const seededAll = members.length > 0 && members.every((m) => input.previous?.has(m.id) === true);
+  // Seeded from the last places, the simulation starts cool so circles settle where they were;
+  // with newcomers among them, warmer, so the others make room.
+  const seededCount = members.filter((m) => input.previous?.has(m.id) === true).length;
+  const heat = seededCount === 0 ? 1 : seededCount === members.length ? 0.05 : 0.3;
   const simulation = forceSimulation<Node>(nodes)
     .randomSource(seeded(nodes.length * 7919 + 17))
-    .alpha(seededAll ? 0.3 : 1)
+    .alpha(heat)
     .force("link", forceLink<Node, SimulationLinkDatum<Node>>(links).distance(132).strength(0.9))
     .force(
       "collide",
