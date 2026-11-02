@@ -29,13 +29,13 @@ message or changes anything.
 The page asks for the map every 5 s while it is visible, and not at all while it
 is hidden; nothing is read for a closed map. Each ask starts what is due:
 
-| What                                                                                             | How often                                                                        |
-| ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------- |
-| Sessions (`api.sessions()`)                                                                      | every 15 s, so a new session shows within 15 s                                   |
-| WhatsApp, Gmail (`newer_than:3d`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                                                      |
-| Instagram, LinkedIn, Messenger (they drive your browser)                                         | every 15 min                                                                     |
-| Embeddings                                                                                       | for new or changed items only, one batched call, at most once a minute           |
-| Naming                                                                                           | one short call per new or changed theme, at most one round a minute              |
+| What                                                                                             | How often                                                              |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- |
+| Sessions (`api.sessions()`)                                                                      | every 15 s, so a new session shows within 15 s                         |
+| WhatsApp, Gmail (`newer_than:3d`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                                            |
+| Instagram, LinkedIn, Messenger (they drive your browser)                                         | every 15 min                                                           |
+| Embeddings                                                                                       | for new or changed items only, one batched call, at most once a minute |
+| Naming                                                                                           | one short call per new or changed theme, at most one round a minute    |
 
 Each source is one listing call through `api.tools.read` - never a loop over
 threads, and nothing is marked read. A missing or failing source is skipped and
