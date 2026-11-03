@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { type Ask, type LlmFailCode, UNSUPPORTED_TEXT } from "../llm";
 import { type MapAnswer, MindMap, SESSIONS_EVERY_MS } from "../mindmap";
 import type { FactSession } from "../types";
-import { type FakeOptions, fakeApi, model, refusing, session } from "./fake";
+import { type FakeOptions, fakeApi, groupingCalls, model, refusing, session } from "./fake";
 
 const NOW = Date.parse("2026-11-02T12:00:00Z");
 const MINUTE = 60_000;
@@ -136,13 +136,13 @@ test("one call groups and names everything; the same view twice keeps every posi
   const fake = model();
   const { map } = setup({}, fake.ask);
   const one = goodMap(await settled(map, NOW)).map;
-  expect(fake.calls).toHaveLength(1);
+  expect(groupingCalls(fake.calls)).toHaveLength(1);
   expect(fake.calls[0]).toMatchObject({ tier: "fast" });
   expect(fake.calls[0]?.schema).toBeDefined();
   const two = goodMap(map.view(NOW + 3000)).map;
   expect(two.nodes).toEqual(one.nodes);
   await map.settle();
-  expect(fake.calls).toHaveLength(1);
+  expect(groupingCalls(fake.calls)).toHaveLength(1);
 });
 
 test("an unchanged map is not asked about again, even after a minute", async () => {
@@ -150,7 +150,7 @@ test("an unchanged map is not asked about again, even after a minute", async () 
   const { map } = setup({}, fake.ask);
   goodMap(await settled(map, NOW));
   goodMap(await settled(map, NOW + 5 * MINUTE));
-  expect(fake.calls).toHaveLength(1);
+  expect(groupingCalls(fake.calls)).toHaveLength(1);
 });
 
 test("feature absent: the error page says to update prifly, and nothing is asked", async () => {
@@ -251,7 +251,7 @@ test("a restart shows the last good map with its time, and asks nothing for the 
   expect(places(shown.map.nodes)).toEqual(places(before.map.nodes));
   expect(shown.current).toBe(true);
   await next.settle();
-  expect(fake.calls).toHaveLength(1);
+  expect(groupingCalls(fake.calls)).toHaveLength(1);
 });
 
 test("a restart with the model gone shows the last good map and why", async () => {

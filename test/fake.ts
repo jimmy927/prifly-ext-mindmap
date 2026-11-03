@@ -38,7 +38,7 @@ export type FakeOptions = {
 /** What the grouping prompt carries, as the tests read it. */
 export type Sent = {
   items: { id: string; kind: string; title: string; repo: string; [field: string]: unknown }[];
-  sharedEntities: { a: string; b: string; label: string }[];
+  sharedEntities?: { a: string; b: string; label: string }[];
   previousTopics: { id: string; name: string; sub: string; members: string[] }[];
 };
 
@@ -46,22 +46,39 @@ export function sentIn(request: LlmRequest): Sent {
   return JSON.parse(request.prompt) as Sent;
 }
 
-/** A well-formed answer: every item in the one topic `t1`, two lines each. */
+/** A well-formed grouping answer: every item in the one topic `t1`. */
 export function goodText(request: LlmRequest, name = "Shop work"): string {
   return JSON.stringify({
     topics: [{ id: "t1", name, sub: "named by the model" }],
-    items: sentIn(request).items.map((i) => ({
-      id: i.id,
-      topic: "t1",
-      lines: ["line one", "line two"],
-    })),
+    items: sentIn(request).items.map((i) => ({ id: i.id, topic: "t1" })),
     related: [],
   });
 }
 
-/** A model that answers every call with `text(request, call number)`, counting the calls. */
+/** Whether `request` asks for summary lines (a batch) and not for the grouping. */
+export function isLines(request: LlmRequest): boolean {
+  return sentIn(request).sharedEntities === undefined;
+}
+
+/** A well-formed answer to a batch of lines: two lines each. */
+export function linesText(request: LlmRequest): string {
+  return JSON.stringify({
+    items: sentIn(request).items.map((i) => ({ id: i.id, lines: ["line one", "line two"] })),
+  });
+}
+
+/** The calls that asked for the grouping, and those that asked for lines. */
+export function groupingCalls(calls: readonly LlmRequest[]): LlmRequest[] {
+  return calls.filter((request) => !isLines(request));
+}
+export function lineCalls(calls: readonly LlmRequest[]): LlmRequest[] {
+  return calls.filter(isLines);
+}
+
+/** A model that answers every call with `text(request, call number)` (the grouping and the lines by default), counting the calls. */
 export function model(
-  text: (request: LlmRequest, call: number) => string = (request) => goodText(request),
+  text: (request: LlmRequest, call: number) => string = (request) =>
+    isLines(request) ? linesText(request) : goodText(request),
 ): { ask: Ask; calls: LlmRequest[] } {
   const calls: LlmRequest[] = [];
   const ask: Ask = async (request) => {

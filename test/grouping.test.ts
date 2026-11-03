@@ -18,12 +18,9 @@ const items = (): Item[] => [
 
 const picked = (list = items()): Picked => ({ items: list, entities: new Map(), shared: [] });
 
-const lines = ["Dual boot", "needs a USB stick"];
-const lines2 = ["Customer waits", "for the money back"];
-
 type Answer = {
   topics?: { id: string; name: string; sub?: string }[];
-  items?: { id: string; topic: string; lines?: string[] }[];
+  items?: { id: string; topic: string }[];
   related?: { a: string; b: string; label: string }[];
 };
 
@@ -36,12 +33,10 @@ function answer(parts: Answer = {}): string {
         { id: "t2", name: "Shop refunds" },
       ]
     ).map((t) => ({ sub: "sub", ...t })),
-    items: (
-      parts.items ?? [
-        { id: "i1", topic: "t1", lines },
-        { id: "i2", topic: "t2", lines: lines2 },
-      ]
-    ).map((i) => ({ lines, ...i })),
+    items: parts.items ?? [
+      { id: "i1", topic: "t1" },
+      { id: "i2", topic: "t2" },
+    ],
     related: parts.related ?? [],
   });
 }
@@ -55,7 +50,7 @@ function grouper(texts: string[], list = items()) {
 }
 
 describe("reading the answer", () => {
-  test("a good answer gives topics, each item's topic and lines, and related pairs", () => {
+  test("a good answer gives topics, each item's topic, and related pairs; no lines", () => {
     const text = answer({
       related: [
         { a: "i1", b: "i2", label: "A very long label for two items" },
@@ -68,7 +63,7 @@ describe("reading the answer", () => {
     expect(grouping?.topics.map((t) => t.name)).toEqual(["Laptop setup", "Shop refunds"]);
     expect(grouping?.topicOf.get(A)).toBe("t1");
     expect(grouping?.topicOf.get(B)).toBe("t2");
-    expect(grouping?.lines.get(B)).toEqual(lines2);
+    expect(grouping).not.toHaveProperty("lines");
     expect(grouping?.related).toEqual([{ a: A, b: B, label: "A very long…" }]);
   });
 
@@ -127,6 +122,8 @@ describe("reading the answer", () => {
       "related",
     ]);
     expect(ANSWER_SCHEMA["required"]).toEqual(["topics", "items", "related"]);
+    // The grouping asks for no summary lines: they are asked for in batches.
+    expect(JSON.stringify(ANSWER_SCHEMA)).not.toContain("lines");
   });
 });
 
@@ -150,7 +147,7 @@ describe("the request", () => {
     ]);
   });
 
-  test("a conversation is sent with its name, subject and the first 200 characters of its last message", () => {
+  test("a conversation is sent with its name, subject and the first 120 characters of its last message", () => {
     const chat = item({
       id: "c:gmail_search:1",
       kind: "conversation",
@@ -166,15 +163,14 @@ describe("the request", () => {
       kind: "chat or mail",
       name: "Ada Lovelace",
       subject: "Refund",
-      brief: ["a", "b", "c", "d"],
+      brief: ["a", "b"],
     });
-    expect(String(sent.items[0]?.["last"])).toBe("x".repeat(200));
+    expect(String(sent.items[0]?.["last"])).toBe("x".repeat(120));
   });
 
   test("the system prompt carries the naming rules", () => {
     expect(request.system).toContain("Personal and Work");
     expect(request.system).toContain("must not share its main word");
-    expect(request.system).toContain("Person contact");
     expect(request.system).toContain("previousTopics");
   });
 });
@@ -189,36 +185,6 @@ describe("the grouper", () => {
     expect(kept).toMatchObject({ model: "claude-haiku", backend: "claude" });
     expect(group.error()).toBeNull();
     expect(state.docs.get("grouping")).toMatchObject({ model: "claude-haiku" });
-  });
-
-  test("a title-repeating line asks once more with the reason; the fixed answer is kept", async () => {
-    const bad = answer({
-      items: [
-        { id: "i1", topic: "t1", lines: ["Linux install", "Linux install"] },
-        { id: "i2", topic: "t2", lines: lines2 },
-      ],
-    });
-    const { group, calls, picked } = grouper([bad, answer()]);
-    await group.update(picked, 0);
-    expect(calls).toHaveLength(2);
-    expect(calls[1]?.prompt).toContain("repeats or shortens the title");
-    expect(calls[1]?.prompt).toContain(calls[0]?.prompt ?? "-");
-    expect(group.answerFor(picked.items)?.lines[A]).toEqual(lines);
-  });
-
-  test("still repeating after the retry: asked only once more, and the line is left empty", async () => {
-    const bad = answer({
-      items: [
-        { id: "i1", topic: "t1", lines: ["Linux install", "linux"] },
-        { id: "i2", topic: "t2", lines: lines2 },
-      ],
-    });
-    const { group, calls, picked } = grouper([bad]);
-    await group.update(picked, 0);
-    expect(calls).toHaveLength(2);
-    const kept = group.answerFor(picked.items);
-    expect(kept?.lines[A]).toEqual([]);
-    expect(kept?.lines[B]).toEqual(lines2);
   });
 
   test("an answer that misses an item is asked again, and the second one is kept", async () => {
@@ -241,10 +207,10 @@ describe("the grouper", () => {
   });
 
   test("the retry refused: a first answer of the right shape stands", async () => {
-    const bad = answer({
-      items: [
-        { id: "i1", topic: "t1", lines: ["Linux install", "x"] },
-        { id: "i2", topic: "t2", lines: lines2 },
+    const mixed = answer({
+      topics: [
+        { id: "t1", name: "Shop refunds" },
+        { id: "t2", name: "Refunds again" },
       ],
     });
     let n = 0;
@@ -253,13 +219,13 @@ describe("the grouper", () => {
       calls.push(request);
       n += 1;
       return n === 1
-        ? { ok: true, text: bad, model: "m", backend: "codex" }
+        ? { ok: true, text: mixed, model: "m", backend: "codex" }
         : { ok: false, code: "capped", reason: "Limit reached." };
     };
     const group = new Grouper({ ask: () => ask });
     await group.update(picked(), 0);
     expect(calls).toHaveLength(2);
-    expect(group.answerFor(items())?.lines[B]).toEqual(lines2);
+    expect(group.answerFor(items())?.topics).toHaveLength(2);
     expect(group.error()).toBeNull();
   });
 });
@@ -335,7 +301,7 @@ describe("the grouper and the naming rules", () => {
     const everything = (name: string) =>
       JSON.stringify({
         topics: [{ id: "t1", name, sub: "s" }],
-        items: four.map((_, i) => ({ id: `i${i + 1}`, topic: "t1", lines })),
+        items: four.map((_, i) => ({ id: `i${i + 1}`, topic: "t1" })),
         related: [],
       });
     const { group, picked } = grouper([everything("Garden jobs"), everything("Yard work")], four);

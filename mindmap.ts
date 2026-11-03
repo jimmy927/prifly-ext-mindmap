@@ -11,14 +11,18 @@
  * good map on screen with the reason.
  *
  * Nothing runs on a timer: the page asks every few seconds while it is
- * visible, and each ask starts whatever is due in the background (the model
- * at most once a minute). A closed map reads nothing.
+ * visible, and each ask starts whatever is due in the background (the grouping
+ * at most once a minute, and at most one batch of summary lines per ask; the
+ * map is drawn as soon as the grouping has answered, its lines follow). A
+ * closed map reads nothing.
  */
 
 import { createHash } from "node:crypto";
 import type { ExtensionApi } from "@prifly/extension-api";
 import { type Answered, Grouper } from "./grouping";
 import type { Point } from "./layout";
+import { AskLimits } from "./limits";
+import { Liner } from "./liner";
 import { knownLinks, relatedLinks } from "./links";
 import { askOf, type Failure, modelLine } from "./llm";
 import { sessionItems } from "./sessions";
@@ -56,6 +60,7 @@ export class MindMap {
   private sessionsAt = Number.NEGATIVE_INFINITY;
   readonly sources: Sources;
   readonly grouper: Grouper;
+  readonly liner: Liner;
   private picked: { key: string; picked: Picked } | null = null;
   private positions = new Map<string, Point>();
   private themes = new Map<string, string>();
@@ -73,16 +78,16 @@ export class MindMap {
   constructor(api: ExtensionApi, deps: MindMapDeps = {}) {
     this.api = api;
     this.sources = deps.sources ?? new Sources(readToolOf(api));
-    this.grouper = new Grouper({
-      ask: () => askOf(api),
-      state: api.state,
-      log: (event, fields) => api.log(event, fields),
-    });
+    const limits = new AskLimits();
+    const log = (event: string, fields: Record<string, string | number | boolean | null>) =>
+      api.log(event, fields);
+    this.grouper = new Grouper({ ask: () => askOf(api), state: api.state, limits, log });
+    this.liner = new Liner({ ask: () => askOf(api), state: api.state, limits, log });
   }
 
   async load(): Promise<void> {
     const state = this.api.state;
-    await this.grouper.load();
+    await Promise.all([this.grouper.load(), this.liner.load()]);
     for (const name of OLD_STATE) void state?.delete(name).catch(() => undefined);
     const map = await state?.get<SavedMap>(MAP_STATE).catch(() => undefined);
     if (map !== undefined && Array.isArray(map.view?.nodes) && typeof map.at === "number") {
@@ -142,11 +147,17 @@ export class MindMap {
     return error === null ? { state: "waiting" } : { state: "error", error };
   }
 
-  /** The reads, then (when the items changed) the model's call. */
+  /** The reads, then (when the items changed) the grouping call, then one batch of summary lines when some are due. */
   private refresh(now: number): Promise<void> {
     return this.sources
       .refresh(now)
-      .then(() => this.grouper.update(this.pick(now), now))
+      .then(async () => {
+        const picked = this.pick(now);
+        await this.grouper.update(picked, now);
+        // Lines only for a map that is drawn: no use asking for them without the grouping.
+        if (this.grouper.answerFor(picked.items) !== null)
+          await this.liner.update(picked.items, now);
+      })
       .catch((error: unknown) => {
         this.api.log("refresh_failed", {
           error: error instanceof Error ? error.message : String(error),
@@ -179,7 +190,7 @@ export class MindMap {
     return {
       themes: answered.topics,
       themeOf: answered.topicOf,
-      lines: answered.lines,
+      lines: this.liner.linesOf(picked.items),
       related: relatedOf(picked, answered.related),
     };
   }

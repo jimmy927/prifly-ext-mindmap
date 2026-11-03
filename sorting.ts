@@ -1,7 +1,9 @@
 /**
  * Grouping and naming: what the model is sent for all the items at once, the
- * JSON Schema it is asked to follow, and how its answer is read (zod). Nothing
- * is grouped without the model.
+ * JSON Schema it is asked to follow, and how its answer is read (zod). The call
+ * is kept small so the fast tier answers inside its 60 s: it sends short ids
+ * and only what grouping needs, and asks for no summary lines (those are asked
+ * for in batches, see `lines.ts`). Nothing is grouped without the model.
  */
 
 import { z } from "zod";
@@ -13,8 +15,12 @@ import type { Item } from "./types";
 export const LINE_CHARS = 22;
 /** The most topics on a map. */
 export const MAX_TOPICS = 9;
-const LAST_CHARS = 200;
-const MAX_TOKENS = 8000;
+const TITLE_CHARS = 100;
+const NAME_CHARS = 40;
+const BRIEF_LINES = 2;
+const BRIEF_CHARS = 50;
+const HEAD_CHARS = 120;
+const MAX_TOKENS = 3000;
 
 /** `text` cut at a word to about `chars`, with no trailing punctuation. */
 export function shorten(text: string, chars = LINE_CHARS): string {
@@ -26,19 +32,27 @@ export function shorten(text: string, chars = LINE_CHARS): string {
   return `${word.replace(/[\s,.;:-]+$/, "")}…`;
 }
 
-/** What the model is told of one item, under the id `id`. */
+/** `text` on one line, hard-cut to `chars`: for what goes into a prompt. */
+export function clip(text: string, chars: number): string {
+  return text.replace(/\s+/g, " ").trim().slice(0, chars);
+}
+
+/** What the grouping call is told of one item, under the id `id`: only what grouping needs. */
 export function promptItem(item: Item, id: string): Record<string, unknown> {
   const out: Record<string, unknown> = {
     id,
     kind: item.kind === "conversation" ? "chat or mail" : item.kind,
-    title: item.title,
-    repo: item.repo,
+    title: clip(item.title, TITLE_CHARS),
   };
-  if (item.brief.length > 0) out["brief"] = item.brief.slice(0, 4);
+  // A card's repo is always "Trello", which its kind already says; a chat's name is often its title.
+  if (item.kind !== "card") out["repo"] = clip(item.repo, NAME_CHARS);
+  if (item.brief.length > 0)
+    out["brief"] = item.brief.slice(0, BRIEF_LINES).map((line) => clip(line, BRIEF_CHARS));
   if (item.kind === "conversation") {
-    if (item.name !== undefined) out["name"] = item.name;
-    if (item.subject !== undefined) out["subject"] = item.subject;
-    if (item.head !== undefined) out["last"] = item.head.slice(0, LAST_CHARS);
+    if (item.name !== undefined && item.name !== item.title)
+      out["name"] = clip(item.name, NAME_CHARS);
+    if (item.subject !== undefined) out["subject"] = clip(item.subject, NAME_CHARS);
+    if (item.head !== undefined) out["last"] = clip(item.head, HEAD_CHARS);
   }
   return out;
 }
@@ -46,13 +60,12 @@ export function promptItem(item: Item, id: string): Record<string, unknown> {
 const SYSTEM = [
   "You group a person's coding sessions, chats, mails and Trello cards into the topics of a mind map, and name them.",
   "Answer with one JSON object and nothing else, in the shape of the schema:",
-  '{"topics":[{"id":"t1","name":"2-3 words","sub":"3-5 words"}],"items":[{"id":"i1","topic":"t1","lines":["<=22 chars","<=22 chars"]}],"related":[{"a":"i1","b":"i2","label":"1-2 words"}]}',
+  '{"topics":[{"id":"t1","name":"2-3 words","sub":"3-5 words"}],"items":[{"id":"i1","topic":"t1"}],"related":[{"a":"i1","b":"i2","label":"1-2 words"}]}',
   `topics: 6 to ${MAX_TOPICS} of them when there are enough items (fewer for a few), each with at least one item. A topic is what the items are about (a product, a customer, a person, a chore), whatever service they came from: a session, the chat and the mail about the same person sit together.`,
   "topic name: never a tool or service such as WhatsApp, Gmail or Trello.",
   'No catch-all names: never "Mixed", "Misc", "Other", "General", "Personal and Work", "Various", "Activity" or an "X and Y" pairing of two unrelated things. Name what the items have in common.',
   'Every topic name must be distinct: it must not share its main word with any other topic\'s name (not "Prifly and ODI" next to "Prifly Project").',
-  "items: every item once, with the id of its topic and two summary lines of at most 22 characters each, saying what it is doing, needs, or is about.",
-  'A summary line must not repeat or merely shorten the item\'s title, and must not say a generic thing such as "Person contact" or "Message from".',
+  "items: every item once, with the id of its topic. Give no summary lines: they are asked for separately.",
   'related: up to 20 pairs of items about the same thing, across kinds and services first, each with a label of 1-2 words naming what the two share. "sharedEntities" are pairs found by matching names, repositories and ticket ids: label them as given or better, and add others you see.',
   '"previousTopics" are the topics of the last map, with their members. So the map stays stable: keep a previous topic\'s id, name and sub for the items that still belong together, and give a new topic an id that is not used there.',
 ].join("\n");
@@ -74,7 +87,7 @@ const Topic = z.object({
   name: z.string().trim().min(1),
   sub: z.string(),
 });
-const Entry = z.object({ id: z.string(), topic: z.string(), lines: z.array(z.string()) });
+const Entry = z.object({ id: z.string(), topic: z.string() });
 const Related = z.object({ a: z.string(), b: z.string(), label: z.string() });
 const Answer = z.object({
   topics: z.array(Topic),
@@ -131,12 +144,11 @@ export type Grouping = {
   topics: { id: string; name: string; sub: string }[];
   /** Item id → topic id. */
   topicOf: Map<string, string>;
-  lines: Map<string, string[]>;
   related: Pair[];
 };
 
 /** The first JSON object in `text`: the whole text, or inside a ```json fence, or between the outer braces. */
-function jsonIn(text: string): unknown {
+export function jsonIn(text: string): unknown {
   const fenced = text.match(/```(?:json)?\s*\n?([\s\S]*?)```/)?.[1];
   const body = fenced ?? text;
   const start = body.indexOf("{");
@@ -194,16 +206,9 @@ export function parseGrouping(text: string, items: readonly Item[]): Parsed {
   const problems = shapeProblems(answer, topicIds, byShort);
   if (problems.length > 0) return unusable(problems);
   const topicOf = new Map<string, string>();
-  const lines = new Map<string, string[]>();
   for (const entry of answer.items) {
     const id = byShort.get(entry.id.trim().toLowerCase());
-    if (id === undefined) continue;
-    topicOf.set(id, entry.topic);
-    const kept = entry.lines.filter((line) => line.trim() !== "").slice(0, 2);
-    lines.set(
-      id,
-      kept.map((line) => shorten(line)),
-    );
+    if (id !== undefined) topicOf.set(id, entry.topic);
   }
   const used = new Set(topicOf.values());
   const related = answer.related.flatMap(({ a, b, label }) => {
@@ -216,5 +221,5 @@ export function parseGrouping(text: string, items: readonly Item[]): Parsed {
   const topics = answer.topics
     .filter((topic) => used.has(topic.id))
     .map((topic) => ({ id: topic.id, name: shorten(topic.name, 18), sub: shorten(topic.sub, 26) }));
-  return { grouping: { topics, topicOf, lines, related }, problems: [] };
+  return { grouping: { topics, topicOf, related }, problems: [] };
 }
