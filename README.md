@@ -30,12 +30,12 @@ message or changes anything.
 The page asks for the map every 5 s while it is visible, and not at all while it
 is hidden; nothing is read for a closed map. Each ask starts what is due:
 
-| What                                                                                             | How often                                              |
-| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
-| Sessions (`api.sessions()`)                                                                      | every 15 s, so a new session shows within 15 s         |
-| WhatsApp, Gmail (`newer_than:3d`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                            |
-| Instagram, LinkedIn, Messenger (they drive your browser)                                         | every 15 min                                           |
-| Grouping and naming (`api.llm.ask`, the fast tier)                                               | one call when the items changed, at most once a minute |
+| What                                                                                             | How often                                                                          |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| Sessions (`api.sessions()`)                                                                      | every 15 s, so a new session shows within 15 s                                     |
+| WhatsApp, Gmail (`newer_than:3d`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                                                        |
+| Instagram, LinkedIn, Messenger (they drive your browser)                                         | every 15 min                                                                       |
+| Grouping and naming (`api.llm.ask`, the fast tier)                                               | one call when the items changed, at most once a minute                             |
 | Summary lines (`api.llm.ask`, the fast tier)                                                     | batches of 20, only for items whose text is new or changed, one batch per page ask |
 
 Each source is one listing call through `api.tools.read` - never a loop over
@@ -78,9 +78,9 @@ code, and they only help the model:
    their members stay. It passes a JSON Schema and asks for the topics (`id`,
    `name`, `sub`), each item's topic and the related pairs with 1-2 word labels
    - **no summary lines**. The answer is validated with zod (the schema comes
-   from the same zod definition), kept in `api.state` and used for exactly the
-   items it was made for; a restart does not ask again. Nothing is grouped
-   without the model. The map is drawn as soon as this call answers.
+     from the same zod definition), kept in `api.state` and used for exactly the
+     items it was made for; a restart does not ask again. Nothing is grouped
+     without the model. The map is drawn as soon as this call answers.
 3. **The summary-line calls** (`liner.ts`, `lines.ts`). The two short lines under
    each circle are asked for apart, in batches of at most 20 items (a batch
    names its items `i1`...`i20` and gets two lines of at most 22 characters
