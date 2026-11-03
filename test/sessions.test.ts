@@ -8,6 +8,8 @@ const THROWAWAY = [
   "/tmp/claude-1000/-home-jimmy-src-prifly-worktrees-prifly-566/0b1c/scratchpad/m/w",
   "/tmp",
   "/tmp/build/x",
+  "/private/var/folders/ab/xyz/T/claude-501/-Users-ada-src-shop/1f2e/scratchpad",
+  "/private/var/folders/ab/xyz/T/claude-501/-Users-ada-src-shop/1f2e/scratchpad/m/w",
   "C:\\Users\\jimmy\\AppData\\Local\\Temp\\claude\\proj\\abc\\scratchpad",
   "c:\\users\\jimmy\\appdata\\local\\temp\\probe",
   "C:/Users/jimmy/APPDATA/LOCAL/TEMP/x",
@@ -25,13 +27,9 @@ test("live sessions in a throwaway folder stay", () => {
 
 test("an ended session in a normal repo stays", () => {
   const kept = session({ title: "Refund bug", cwd: "/home/ada/src/shop", state: "ended" });
-  const lookalike = session({
-    title: "Temp notes",
-    cwd: "/home/ada/src/tmp-tools",
-    state: "ended",
-  });
-  expect(sessionItems([kept, lookalike], NOW).map((item) => item.id)).toEqual([
-    kept.id,
-    lookalike.id,
-  ]);
+  const others = ["/home/ada/src/tmp-tools", "/home/ada/src/claude-tools/notes"].map((cwd) =>
+    session({ title: "Notes", cwd, state: "ended" }),
+  );
+  const ids = sessionItems([kept, ...others], NOW).map((item) => item.id);
+  expect(ids.sort()).toEqual([kept, ...others].map((s) => s.id).sort());
 });
