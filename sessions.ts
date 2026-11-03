@@ -15,12 +15,25 @@ function isSummariserFolder(cwd: string): boolean {
 }
 
 /**
+ * A throwaway folder: a Claude scratchpad (`scratchpad` under a `claude` temp
+ * folder), `/tmp` or anything under it, or Windows' `AppData\Local\Temp`.
+ */
+function isThrowawayFolder(cwd: string): boolean {
+  const path = cwd.replace(/\\/g, "/").toLowerCase();
+  if (/^\/tmp(?:\/|$)/.test(path)) return true;
+  if (/\/appdata\/local\/temp(?:\/|$)/.test(path)) return true;
+  return /\/claude[^/]*\/(?:.*\/)?scratchpad(?:\/|$)/.test(path);
+}
+
+/**
  * A leftover nobody looks at: an archived session, an ended untitled one, an
- * agent's report, or a summariser fold. A live untitled session stays: it is
- * new, its name is coming.
+ * agent's report, a summariser fold, or an ended one in a throwaway folder
+ * (one-shot probes). A live untitled session, or a live one in a throwaway
+ * folder, stays: it is new, or someone may be watching it.
  */
 export function isLeftover(session: FactSession): boolean {
   if (session.archived === true) return true;
+  if (session.state === "ended" && isThrowawayFolder(session.cwd)) return true;
   const title = session.title.trim();
   const untitled = title === "" || title.toLowerCase() === "untitled";
   if (untitled && session.state === "ended") return true;
