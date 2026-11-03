@@ -2,8 +2,8 @@
  * The model groups and names: when the items the map is made of changed (their
  * fingerprint), one call on prifly's fast tier (`api.llm.ask`) gets all the
  * items with hints — the pairs that share an entity and the last map's topics —
- * and answers the topics, each item's topic and two lines, and the related
- * pairs. At most one call a minute, failures included. An answer that breaks
+ * and answers the topics, each item's topic, and the related pairs (no summary
+ * lines: `liner.ts` asks for those apart). At most one call a minute, failures included. An answer that breaks
  * the rules in `rules.ts` is asked for once more with the reasons. The answer
  * is kept in `api.state`, so a restart does not ask again. Nothing is grouped
  * without the model: no feature, a refusal, a failed call or a bad answer
@@ -12,6 +12,7 @@
 
 import { createHash } from "node:crypto";
 import type { ExtensionStateApi } from "@prifly/extension-api";
+import { AskLimits } from "./limits";
 import {
   type Ask,
   badAnswerFailure,
@@ -45,7 +46,6 @@ export type Answered = {
   fingerprint: string;
   topics: Theme[];
   topicOf: Record<string, string>;
-  lines: Record<string, string[]>;
   related: Pair[];
   model: string;
   backend: LlmBackend;
@@ -56,7 +56,6 @@ export const NOTHING: Answered = {
   fingerprint: "",
   topics: [],
   topicOf: {},
-  lines: {},
   related: [],
   model: "",
   backend: "claude",
@@ -80,6 +79,8 @@ export type GrouperDeps = {
   /** `api.llm.ask`, or null where prifly has none. Asked each time, so a prifly update is seen. */
   ask: () => Ask | null;
   state?: ExtensionStateApi | undefined;
+  /** Shared with the summary lines: one ask in flight, and the hour's count. */
+  limits?: AskLimits;
   log?: (event: string, fields: Record<string, string | number | boolean | null>) => void;
 };
 
@@ -89,12 +90,14 @@ type Read = { grouping: Grouping | null; checked: Review | null; problems: strin
 export class Grouper {
   private answered: Answered | null = null;
   private askedAt = Number.NEGATIVE_INFINITY;
-  private busy = false;
   private failure: Failure | null = null;
   private readonly deps: GrouperDeps;
+  private readonly limits: AskLimits;
+  private clock = 0;
 
   constructor(deps: GrouperDeps) {
     this.deps = deps;
+    this.limits = deps.limits ?? new AskLimits();
   }
 
   /** The answer kept in `api.state`. */
@@ -123,7 +126,7 @@ export class Grouper {
   /** Whether `update` would call now: the items changed, a minute has passed since the last call, and prifly has a model. */
   due(items: readonly Item[], now: number): boolean {
     return (
-      !this.busy &&
+      !this.limits.busy &&
       items.length > 0 &&
       this.deps.ask() !== null &&
       now - this.askedAt >= MIN_GAP_MS &&
@@ -134,9 +137,9 @@ export class Grouper {
   /** Ask for the grouping of `picked`, when due; see `due`. */
   async update(picked: Picked, now: number): Promise<void> {
     const ask = this.deps.ask();
-    if (ask === null || !this.due(picked.items, now)) return;
-    this.busy = true;
+    if (ask === null || !this.due(picked.items, now) || !this.limits.begin()) return;
     this.askedAt = now;
+    this.clock = now;
     const started = Date.now();
     try {
       const hints: Hints = { shared: picked.shared, previous: this.previous() };
@@ -147,11 +150,12 @@ export class Grouper {
         ms: Date.now() - started,
       });
     } finally {
-      this.busy = false;
+      this.limits.end();
     }
   }
 
   private async callAsk(ask: Ask, request: Parameters<Ask>[0]): Promise<LlmAnswer> {
+    this.limits.record(this.clock);
     try {
       return await ask(request);
     } catch (error) {
@@ -185,7 +189,7 @@ export class Grouper {
     if (parsed.grouping === null)
       return { grouping: null, checked: null, problems: parsed.problems };
     const fixed = new Set(this.kept(parsed.grouping).keys());
-    const checked = review(parsed.grouping, items, fixed);
+    const checked = review(parsed.grouping, fixed);
     return { grouping: parsed.grouping, checked, problems: reasons(checked) };
   }
 
@@ -247,8 +251,6 @@ export class Grouper {
       fingerprint: fingerprintOf(items),
       topics,
       topicOf: Object.fromEntries(grouping.topicOf),
-      // A line that repeated its title is left out: none is better than a repeat.
-      lines: Object.fromEntries(items.map((item) => [item.id, checked.lines.get(item.id) ?? []])),
       related: grouping.related,
       model: answer.model,
       backend: answer.backend,

@@ -1,12 +1,12 @@
 /**
  * What a good naming is, checked in code after the answer is parsed: a theme
  * name that is no catch-all and shares no main word with another theme's
- * name, and summary lines that say more than their item's title. A bad part
- * is sent back once with its reason (see `grouping.ts`).
+ * name, and summary lines that say more than their item's title. A bad theme
+ * name is sent back once with its reason (see `grouping.ts`); a bad line is
+ * left out (see `liner.ts`).
  */
 
 import type { Grouping } from "./sorting";
-import type { Item } from "./types";
 
 /** Lower case, no accents, letters and digits only, single spaces: for comparing words, not for showing. */
 export function normalise(text: string): string {
@@ -111,21 +111,13 @@ export function lineProblem(line: string, title: string): string | null {
 export type Review = {
   /** The topics whose name is no good, by topic id. */
   names: Map<string, NameProblem>;
-  /** The lines that passed, by item id. */
-  lines: Map<string, string[]>;
-  /** Why the others did not. */
-  lineProblems: string[];
 };
 
 /**
  * A grouping checked: each topic's name beside the others' (except the
- * `fixed` topics, which keep an earlier name) and each item's lines.
+ * `fixed` topics, which keep an earlier name).
  */
-export function review(
-  grouping: Grouping,
-  items: readonly Item[],
-  fixed: ReadonlySet<string>,
-): Review {
+export function review(grouping: Grouping, fixed: ReadonlySet<string>): Review {
   const names = new Map<string, NameProblem>();
   for (const topic of grouping.topics) {
     if (fixed.has(topic.id)) continue;
@@ -133,27 +125,19 @@ export function review(
     const problem = nameProblem(topic.name, others);
     if (problem !== null) names.set(topic.id, problem);
   }
-  const titles = new Map(items.map((item) => [item.id, item.title]));
-  const lines = new Map<string, string[]>();
-  const lineProblems: string[] = [];
-  for (const [id, given] of grouping.lines) {
-    const title = titles.get(id) ?? "";
-    const good: string[] = [];
-    for (const line of given) {
-      const problem = lineProblem(line, title);
-      if (problem === null) good.push(line);
-      else lineProblems.push(problem);
-    }
-    lines.set(id, good);
-  }
-  return { names, lines, lineProblems };
+  return { names };
+}
+
+/** The lines of one item that pass `lineProblem` under its `title`; the rest are left out. */
+export function goodLines(lines: readonly string[], title: string): string[] {
+  return lines.filter((line) => lineProblem(line, title) === null);
 }
 
 const MAX_REASONS = 12;
 
 /** Every reason a review found, for the retry message. */
 export function reasons(checked: Review): string[] {
-  const all = [...[...checked.names.values()].map((p) => p.text), ...checked.lineProblems];
+  const all = [...checked.names.values()].map((p) => p.text);
   return all.length <= MAX_REASONS
     ? all
     : [...all.slice(0, MAX_REASONS), `and ${all.length - MAX_REASONS} more like these`];

@@ -30,12 +30,13 @@ message or changes anything.
 The page asks for the map every 5 s while it is visible, and not at all while it
 is hidden; nothing is read for a closed map. Each ask starts what is due:
 
-| What                                                                                             | How often                                              |
-| ------------------------------------------------------------------------------------------------ | ------------------------------------------------------ |
-| Sessions (`api.sessions()`)                                                                      | every 15 s, so a new session shows within 15 s         |
-| WhatsApp, Gmail (`newer_than:3d`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                            |
-| Instagram, LinkedIn, Messenger (they drive your browser)                                         | every 15 min                                           |
-| Grouping and naming (`api.llm.ask`, the fast tier)                                               | one call when the items changed, at most once a minute |
+| What                                                                                             | How often                                                                          |
+| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| Sessions (`api.sessions()`)                                                                      | every 15 s, so a new session shows within 15 s                                     |
+| WhatsApp, Gmail (`newer_than:3d`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                                                        |
+| Instagram, LinkedIn, Messenger (they drive your browser)                                         | every 15 min                                                                       |
+| Grouping and naming (`api.llm.ask`, the fast tier)                                               | one call when the items changed, at most once a minute                             |
+| Summary lines (`api.llm.ask`, the fast tier)                                                     | batches of 20, only for items whose text is new or changed, one batch per page ask |
 
 Each source is one listing call through `api.tools.read` - never a loop over
 threads, and nothing is marked read. A missing or failing source is skipped and
@@ -65,31 +66,57 @@ code, and they only help the model:
    reader's own name, a surname, a word every mail has) ties nothing. The pairs
    also decide which conversations and cards are drawn (the ones that match a
    session best first).
-2. **One model call** (`grouping.ts`, `sorting.ts`). Each refresh where the items
-   changed - their ids, titles, repositories, brief lines and, for a
+2. **The grouping call** (`grouping.ts`, `sorting.ts`). Each refresh where the
+   items changed - their ids, titles, repositories, brief lines and, for a
    conversation, its name, subject and the start of its last message - the
-   extension makes one `api.llm.ask` call on prifly's **fast tier**. It sends
-   all the items, and two hints: the shared-entity pairs with their labels, and
-   the previous topics (id, name, members) so topics keep their ids and names
-   while their members stay. It passes a JSON Schema and asks for the topics
-   (`id`, `name`, `sub`), each item's topic and two summary lines, and the
-   related pairs with 1-2 word labels. The answer is validated with zod (the
-   schema comes from the same zod definition), kept in `api.state` and used for
-   exactly the items it was made for; a restart does not ask again. Nothing is
-   grouped without the model.
+   extension makes one `api.llm.ask` call on prifly's **fast tier**. It is kept
+   small: the items go by short ids (`i1`, `i2`, ...) with only what grouping
+   needs (kind, title, repository, up to two brief lines of 50 characters; for a
+   conversation its name, subject and the first 120 characters of its last
+   message), and two hints: the shared-entity pairs with their labels, and the
+   previous topics (id, name, members) so topics keep their ids and names while
+   their members stay. It passes a JSON Schema and asks for the topics (`id`,
+   `name`, `sub`), each item's topic and the related pairs with 1-2 word labels
+   - **no summary lines**. The answer is validated with zod (the schema comes
+     from the same zod definition), kept in `api.state` and used for exactly the
+     items it was made for; a restart does not ask again. Nothing is grouped
+     without the model. The map is drawn as soon as this call answers.
+3. **The summary-line calls** (`liner.ts`, `lines.ts`). The two short lines under
+   each circle are asked for apart, in batches of at most 20 items (a batch
+   names its items `i1`...`i20` and gets two lines of at most 22 characters
+   back). Each item's lines are kept in `api.state` with a fingerprint of what
+   they were made from (title, brief lines, conversation name, subject and
+   head); only items with no lines yet, or whose fingerprint changed, go in a
+   batch. Batches run one after another, at most one per page ask (so 75 items
+   take 4 asks of the page, about 20 s), and only once the grouping is drawn. A
+   failed batch (a refusal, a throw, an unreadable answer) stops the batches
+   for a minute; the map is not affected. Until an item has lines it is drawn
+   with its title only, and when its text changes its old lines stay until the
+   new ones come.
 
-The prompt carries rules for the names and lines, and `rules.ts` checks them
+**Why two kinds of call.** The fast tier has a 60 s timeout, and prifly allows
+one ask in flight per extension and 60 an hour. One call that returned the
+topics, two lines for each of ~75 items and the related pairs ran past 60 s on
+Claude's fast tier every time, so no map ever appeared. Grouping alone is a
+small answer (topics, an id per item, a few pairs); the lines are many small
+answers that can fail or wait without costing the map. A first load of ~75
+items is 1 grouping call and about 4 line batches; later refreshes normally
+need none or one. The grouping and the batches share one limit (`limits.ts`):
+never two asks at once, and no batch once 40 asks have been made in the last
+hour, so the grouping and its retry always have room.
+
+The prompts carry rules for the names and lines, and `rules.ts` checks them
 after parsing. A theme name is bad when it shares its main word (any subject
 word of three letters or more, leaving out filler such as "project" or
 "support") with another theme's name, or is a catch-all ("Mixed", "Misc",
-"Other", "General", "Various", "Activity", "Personal and Work"). A summary line
-is bad when it equals, starts, or sits inside its item's title (case and
-punctuation ignored), or is generic ("Person contact", "Message from"). A bad
-part, or an answer that leaves an item without a topic, sends the same call back
-once with the reasons. If a bad part remains, the topic keeps its last good name
+"Other", "General", "Various", "Activity", "Personal and Work"). A bad name, or
+a grouping that leaves an item without a topic, sends the grouping call back
+once with the reasons. If a bad name remains, the topic keeps its last good name
 (with no earlier name, an overlap is kept and a catch-all makes the answer
-unusable), and a bad line is left out, so the circle shows none rather than a
-repeat of its title.
+unusable). A summary line is bad when it equals, starts, or sits inside its
+item's title (case and punctuation ignored), or is generic ("Person contact",
+"Message from"): it is left out, so the circle shows none rather than a repeat
+of its title.
 
 ## The model
 
@@ -118,7 +145,8 @@ reader sees when prifly has no model for the map:
   was (positions, themes, names), with the reason in the footer and when the map
   was last updated ("Last updated 14:32"). A change in the items, such as a new
   session, shows once the model has grouped it; until then the last good map
-  stays.
+  stays. A failing summary-line batch is not an error of the map: it shows
+  without those lines and the batch is tried again after a minute.
 
 ## The layout
 
