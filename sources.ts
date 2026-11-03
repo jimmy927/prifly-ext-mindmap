@@ -127,7 +127,8 @@ function itemOf(source: Source, entry: Entry): Item {
   if (entry.subject !== undefined) item.subject = entry.subject;
   if (entry.head !== undefined) item.head = entry.head;
   if (entry.last !== undefined) item.last = entry.last;
-  const url = source.link === undefined || entry.key.startsWith("#") ? entry.url : source.link(entry.key);
+  const url =
+    source.link === undefined || entry.key.startsWith("#") ? entry.url : source.link(entry.key);
   if (url !== undefined) item.url = url;
   if (source.pinned === true) item.pinned = true;
   if (entry.address !== undefined) item.address = entry.address;

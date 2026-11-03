@@ -33,13 +33,13 @@ changes the mailbox.
 The page asks for the map every 5 s while it is visible, and not at all while it
 is hidden; nothing is read for a closed map. Each ask starts what is due:
 
-| What                                                                                             | How often                                                                          |
-| ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
-| Sessions (`api.sessions()`)                                                                      | every 15 s, so a new session shows within 15 s                                     |
-| WhatsApp, Gmail (`is:starred OR (is:unread in:inbox)`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                                            |
-| Instagram, LinkedIn, Messenger (they drive your browser)                                         | every 15 min                                                                       |
-| Grouping and naming (`api.llm.ask`, the fast tier)                                               | one call when the items changed, at most once a minute                             |
-| Summary lines (`api.llm.ask`, the fast tier)                                                     | batches of 20, only for items whose text is new or changed, one batch per page ask |
+| What                                                                                                                  | How often                                                                          |
+| --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Sessions (`api.sessions()`)                                                                                           | every 15 s, so a new session shows within 15 s                                     |
+| WhatsApp, Gmail (`is:starred OR (is:unread in:inbox)`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                                                        |
+| Instagram, LinkedIn, Messenger (they drive your browser)                                                              | every 15 min                                                                       |
+| Grouping and naming (`api.llm.ask`, the fast tier)                                                                    | one call when the items changed, at most once a minute                             |
+| Summary lines (`api.llm.ask`, the fast tier)                                                                          | batches of 20, only for items whose text is new or changed, one batch per page ask |
 
 Each source is one listing call through `api.tools.read` - never a loop over
 threads, and nothing is marked read. A missing or failing source is skipped and
