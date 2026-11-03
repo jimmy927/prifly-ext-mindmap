@@ -267,3 +267,19 @@ test("a restart with the model gone shows the last good map and why", async () =
   expect(shown.map.themes).toEqual(before.map.themes);
   expect(shown.error?.text).toBe(UNSUPPORTED_TEXT);
 });
+
+test("a Gmail circle carries the thread's link, which the panel opens on a click", async () => {
+  const { map } = setup({
+    features: ["state", "read-tools", "llm-ask"],
+    read: async (name) => {
+      if (name === "gmail_search")
+        return "t-old | 3 msgs | Mon, 01 Jun 2026 09:00:00 +0000 | Grace <grace@example.com> | Starred long ago";
+      throw new Error("not installed");
+    },
+  });
+  const view = goodMap(await settled(map, NOW)).map;
+  expect(view.nodes.find((n) => n.kind === "conversation")).toMatchObject({
+    service: "Gmail",
+    url: "https://mail.google.com/mail/u/0/#all/t-old",
+  });
+});

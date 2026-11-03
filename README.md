@@ -22,8 +22,11 @@ and it opens over nearly the whole window.
   read.
 
 Clicking a session opens it in prifly. Clicking a card opens it in Trello, and a
-conversation opens its link when its tool gave one. The map never sends a
-message or changes anything.
+conversation opens its link when its tool gave one - a Gmail circle opens its
+thread in your browser (`https://mail.google.com/mail/u/0/#all/<thread_id>`, or
+`https://mail.google.com/mail/?authuser=<email>#all/<thread_id>` when the read
+was for a named account). The map never sends a message, marks anything read or
+changes the mailbox.
 
 ## How it stays current
 
@@ -33,7 +36,7 @@ is hidden; nothing is read for a closed map. Each ask starts what is due:
 | What                                                                                             | How often                                                                          |
 | ------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------- |
 | Sessions (`api.sessions()`)                                                                      | every 15 s, so a new session shows within 15 s                                     |
-| WhatsApp, Gmail (`newer_than:3d`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                                                        |
+| WhatsApp, Gmail (`is:starred OR (is:unread in:inbox)`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                                            |
 | Instagram, LinkedIn, Messenger (they drive your browser)                                         | every 15 min                                                                       |
 | Grouping and naming (`api.llm.ask`, the fast tier)                                               | one call when the items changed, at most once a minute                             |
 | Summary lines (`api.llm.ask`, the fast tier)                                                     | batches of 20, only for items whose text is new or changed, one batch per page ask |
@@ -41,8 +44,10 @@ is hidden; nothing is read for a closed map. Each ask starts what is due:
 Each source is one listing call through `api.tools.read` - never a loop over
 threads, and nothing is marked read. A missing or failing source is skipped and
 named in the footer. Every conversation the listings give is matched against the
-sessions; up to 20 are drawn - those that match a session best first (recency
-only breaks ties), then any with a message in the last 3 days - and up to 15
+sessions; up to 20 are drawn - first the Gmail threads (every starred thread,
+and every unread thread in the inbox, whatever their age: one `gmail_search`
+call, max 30), then those that match a session best first (recency only breaks
+ties), then any with a message in the last 3 days - and up to 15
 cards, those with a session first, then the best matches. Ended leftovers
 (untitled sessions, agent reports, prifly's summariser folds) are left out, and
 at most 40 sessions are drawn.

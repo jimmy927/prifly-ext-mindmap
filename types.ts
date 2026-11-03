@@ -96,6 +96,8 @@ export type Item = {
   address?: string;
   /** What a click opens: a card's or a conversation's link. */
   url?: string;
+  /** Always kept on the map, whatever its age, and ahead of other conversations. */
+  pinned?: boolean;
   /** The session a card is the ticket of. */
   sessionId?: string;
   /** A session's own solid links. */

@@ -22,9 +22,41 @@ export type Source = {
   kind: "conversation" | "card";
   everyMs: number;
   args: (now: number) => Record<string, unknown>;
+  /** What a click on one of its items opens, from the item's key; absent: the link the tool gave. */
+  link?: (key: string) => string;
+  /** Its items are always kept: they skip the recency rule and come first under the cap. */
+  pinned?: boolean;
   /** A pipe table's columns when it has no header. */
   columns?: string[];
 };
+
+/** The query for the threads the reader wants on the map: every starred one, every unread one in the inbox. */
+export const GMAIL_QUERY = "is:starred OR (is:unread in:inbox)";
+
+/**
+ * A Gmail thread in the reader's browser; `/u/0/` unless the read was for a
+ * named account, which `authuser` picks.
+ */
+export function gmailThreadUrl(threadId: string, account?: string): string {
+  const id = encodeURIComponent(threadId);
+  return account === undefined || account === ""
+    ? `https://mail.google.com/mail/u/0/#all/${id}`
+    : `https://mail.google.com/mail/?authuser=${account}#all/${id}`;
+}
+
+/** The Gmail read: one listing call; with an `account`, that account's mail and links. */
+export function gmailSource(account?: string): Source {
+  return {
+    tool: "gmail_search",
+    service: "Gmail",
+    kind: "conversation",
+    everyMs: 5 * MINUTE,
+    args: () => ({ query: GMAIL_QUERY, max: 30, ...(account === undefined ? {} : { account }) }),
+    link: (key) => gmailThreadUrl(key, account),
+    pinned: true,
+    columns: ["thread_id", "messages", "date", "from", "subject"],
+  };
+}
 
 function isoDay(at: number): string {
   return new Date(at).toISOString().slice(0, 10);
@@ -38,14 +70,7 @@ export const SOURCES: readonly Source[] = [
     everyMs: 5 * MINUTE,
     args: () => ({ limit: 30 }),
   },
-  {
-    tool: "gmail_search",
-    service: "Gmail",
-    kind: "conversation",
-    everyMs: 5 * MINUTE,
-    args: () => ({ query: "newer_than:3d", max: 30 }),
-    columns: ["thread_id", "messages", "date", "from", "subject"],
-  },
+  gmailSource(),
   {
     tool: "outlook_search",
     service: "Outlook",
@@ -102,7 +127,9 @@ function itemOf(source: Source, entry: Entry): Item {
   if (entry.subject !== undefined) item.subject = entry.subject;
   if (entry.head !== undefined) item.head = entry.head;
   if (entry.last !== undefined) item.last = entry.last;
-  if (entry.url !== undefined) item.url = entry.url;
+  const url = source.link === undefined || entry.key.startsWith("#") ? entry.url : source.link(entry.key);
+  if (url !== undefined) item.url = url;
+  if (source.pinned === true) item.pinned = true;
   if (entry.address !== undefined) item.address = entry.address;
   if (entry.sessionId !== undefined) item.sessionId = entry.sessionId;
   return item;
@@ -194,17 +221,21 @@ function byMatch(score: Match): (a: Item, b: Item) => number {
 }
 
 /**
- * The conversations worth a circle, from every one the listings gave: those
- * that match a session's topic first, best match first; then any with a
- * message in the last three days, newest first; at most `MAX_CONVERSATIONS`.
+ * The conversations worth a circle, from every one the listings gave: the
+ * pinned ones (Gmail's starred and unread-in-inbox threads, whatever their
+ * age) first; then those that match a session's topic, best match first; then
+ * any with a message in the last three days, newest first; at most
+ * `MAX_CONVERSATIONS`.
  */
 export function keepConversations(items: readonly Item[], score: Match, now: number): Item[] {
   const conversations = items.filter((item) => item.kind === "conversation");
-  const matched = conversations.filter((item) => score(item) > 0).sort(byMatch(score));
-  const recent = conversations
+  const pinned = conversations.filter((item) => item.pinned === true).sort(byMatch(score));
+  const others = conversations.filter((item) => item.pinned !== true);
+  const matched = others.filter((item) => score(item) > 0).sort(byMatch(score));
+  const recent = others
     .filter((item) => score(item) <= 0 && item.last !== undefined && now - item.last <= RECENT_MS)
     .sort((a, b) => (b.last ?? 0) - (a.last ?? 0));
-  return [...matched, ...recent].slice(0, MAX_CONVERSATIONS);
+  return [...pinned, ...matched, ...recent].slice(0, MAX_CONVERSATIONS);
 }
 
 /** The cards worth a circle: those with a session first, then those that match one best; at most `MAX_CARDS`. */

@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { parseListing } from "../parse";
-import { keepCards, keepConversations, MAX_CONVERSATIONS, type Source, Sources } from "../sources";
+import {
+  GMAIL_QUERY,
+  gmailSource,
+  keepCards,
+  keepConversations,
+  MAX_CONVERSATIONS,
+  type Source,
+  Sources,
+} from "../sources";
 import { textOf } from "../types";
 import { item } from "./fake";
 
@@ -209,5 +217,75 @@ describe("which conversations and cards are kept", () => {
     const kept = keepCards(cards);
     expect(kept).toHaveLength(15);
     expect(kept[0]?.id).toBe("k:19");
+  });
+});
+
+describe("Gmail: starred and unread in the inbox", () => {
+  const LISTING = [
+    "t-old | 3 msgs | Mon, 01 Jun 2026 09:00:00 +0000 | Grace Hopper <grace@example.com> | Starred long ago",
+    "t-new | 1 msg | Mon, 02 Nov 2026 09:00:00 +0000 | Ada <ada@example.com> | Unread today",
+  ].join("\n");
+
+  function gmailRead(account?: string) {
+    const calls: { name: string; args: Record<string, unknown> }[] = [];
+    const sources = new Sources(
+      async (name, args) => {
+        calls.push({ name, args });
+        return LISTING;
+      },
+      [gmailSource(account)],
+    );
+    return { calls, sources };
+  }
+
+  test("one listing call with exactly the starred-or-unread-inbox query", async () => {
+    const { calls, sources } = gmailRead();
+    await sources.refresh(NOW);
+    await sources.refresh(NOW + 1000);
+    expect(GMAIL_QUERY).toBe("is:starred OR (is:unread in:inbox)");
+    expect(calls).toEqual([
+      { name: "gmail_search", args: { query: "is:starred OR (is:unread in:inbox)", max: 30 } },
+    ]);
+  });
+
+  test("a thread older than 3 days is kept, an unread one too, each with its #all link", async () => {
+    const { sources } = gmailRead();
+    await sources.refresh(NOW);
+    const kept = keepConversations(sources.items(), () => 0, NOW);
+    expect(kept.map((i) => [i.id, i.url])).toEqual([
+      ["c:gmail_search:t-new", "https://mail.google.com/mail/u/0/#all/t-new"],
+      ["c:gmail_search:t-old", "https://mail.google.com/mail/u/0/#all/t-old"],
+    ]);
+  });
+
+  test("a named account is sent to the tool and picks the link's authuser", async () => {
+    const { calls, sources } = gmailRead("me@example.com");
+    await sources.refresh(NOW);
+    expect(calls[0]?.args).toEqual({
+      query: GMAIL_QUERY,
+      max: 30,
+      account: "me@example.com",
+    });
+    expect(sources.items().map((i) => i.url)).toEqual([
+      "https://mail.google.com/mail/?authuser=me@example.com#all/t-old",
+      "https://mail.google.com/mail/?authuser=me@example.com#all/t-new",
+    ]);
+  });
+
+  test("Gmail threads come before other conversations under the cap", async () => {
+    const { sources } = gmailRead();
+    await sources.refresh(NOW);
+    const others = Array.from({ length: 30 }, (_, i) =>
+      item({ id: `c:w:${i}`, kind: "conversation", last: NOW - i * HOUR }),
+    );
+    const kept = keepConversations([...others, ...sources.items()], () => 0, NOW);
+    expect(kept).toHaveLength(MAX_CONVERSATIONS);
+    expect(kept.slice(0, 2).map((i) => i.source)).toEqual(["gmail_search", "gmail_search"]);
+    expect(kept[2]?.id).toBe("c:w:0");
+  });
+
+  test("other services keep the recency rule", () => {
+    const stale = item({ id: "c:w:s", kind: "conversation", last: NOW - 10 * 24 * HOUR });
+    expect(keepConversations([stale], () => 0, NOW)).toEqual([]);
   });
 });
