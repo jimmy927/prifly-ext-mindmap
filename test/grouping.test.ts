@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { Grouper, KEEP_NAME, MIN_GAP_MS } from "../grouping";
 import type { Ask, LlmRequest } from "../llm";
 import { lineProblem, nameProblem } from "../rules";
-import { ANSWER_SCHEMA, groupingRequest, parseGrouping } from "../sorting";
+import { ANSWER_SCHEMA, groupingRequest, MAX_TOKENS, parseGrouping } from "../sorting";
 import type { Picked } from "../topics";
 import type { Item } from "../types";
 import { fakeState, item, model, type Sent, sentIn } from "./fake";
@@ -148,6 +148,11 @@ describe("the request", () => {
     expect(sent.previousTopics).toEqual([
       { id: "t1", name: "Laptop setup", sub: "dual boot", members: ["i1"] },
     ]);
+  });
+
+  test("leaves room for the model's thinking: at 8,000 tokens a 75-item answer never came back", () => {
+    expect(request.maxTokens).toBe(MAX_TOKENS);
+    expect(MAX_TOKENS).toBeGreaterThanOrEqual(32_000);
   });
 
   test("a conversation is sent with its name, subject and the first 200 characters of its last message", () => {

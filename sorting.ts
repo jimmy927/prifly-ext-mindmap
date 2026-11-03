@@ -14,7 +14,14 @@ export const LINE_CHARS = 22;
 /** The most topics on a map. */
 export const MAX_TOPICS = 9;
 const LAST_CHARS = 200;
-const MAX_TOKENS = 8000;
+/**
+ * The answer's cap, thinking included: Claude Code counts the model's thinking
+ * against it. For 75 items Haiku thinks 3,000-6,000 tokens and answers about
+ * 3,500; at 8,000 it ran out mid-answer, Claude Code asked again three times
+ * and the fast tier's 60 s ran out with no answer (2026-11-03). At 32,000 the
+ * same ask answered in 31-38 s.
+ */
+export const MAX_TOKENS = 32_000;
 
 /** `text` cut at a word to about `chars`, with no trailing punctuation. */
 export function shorten(text: string, chars = LINE_CHARS): string {
