@@ -14,7 +14,13 @@ import type { Item } from "./types";
 
 /** The most items in one call. */
 export const BATCH = 20;
-const MAX_TOKENS = 2500;
+/**
+ * The answer's cap, thinking included: Claude Code counts the model's thinking
+ * against it, and on a cap it asks again rather than answering. For 20 items a
+ * batch took 4 turns and 57-62 s with no answer at 2,500 (Haiku thought about
+ * 9,500 tokens); at 32,000 it answered in 18-22 s (2026-11-03).
+ */
+export const MAX_TOKENS = 32_000;
 const TITLE_CHARS = 100;
 const BRIEF_LINES = 4;
 const BRIEF_CHARS = 100;

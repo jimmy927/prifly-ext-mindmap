@@ -2,7 +2,13 @@ import { describe, expect, test } from "bun:test";
 import { Grouper } from "../grouping";
 import { AskLimits, LINES_BUDGET } from "../limits";
 import { FAIL_GAP_MS, Liner } from "../liner";
-import { BATCH, LINES_SCHEMA, lineFingerprint, linesRequest } from "../lines";
+import {
+  BATCH,
+  MAX_TOKENS as LINES_MAX_TOKENS,
+  LINES_SCHEMA,
+  lineFingerprint,
+  linesRequest,
+} from "../lines";
 import type { Ask, LlmRequest } from "../llm";
 import { MindMap } from "../mindmap";
 import { ANSWER_SCHEMA, groupingRequest } from "../sorting";
@@ -88,6 +94,12 @@ describe("the size of the calls", () => {
     expect(batch.schema).toBe(LINES_SCHEMA);
     expect(JSON.stringify(LINES_SCHEMA)).not.toContain("topics");
     expect(batch.tier).toBe("fast");
+  });
+
+  test("a line batch leaves room for the model's thinking: at 2,500 tokens a 20-item answer never came back", () => {
+    const batch = linesRequest(items.slice(0, BATCH));
+    expect(batch.maxTokens).toBe(LINES_MAX_TOKENS);
+    expect(LINES_MAX_TOKENS).toBeGreaterThanOrEqual(32_000);
   });
 });
 
