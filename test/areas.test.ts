@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import manifest from "../prifly-extension.json";
 import { areaId, DEFAULT_AREAS, DEFAULT_AREAS_TEXT, OTHER, parseAreas } from "../areas";
 import type { LlmRequest } from "../llm";
 import { type MapAnswer, MindMap } from "../mindmap";
 import { exampleLine, parsePlacing, placingRequest } from "../placing";
+import manifest from "../prifly-extension.json";
 import type { FactSession } from "../types";
 import { fakeApi, groupingCalls, isLines, item, linesText, model, session } from "./fake";
 
