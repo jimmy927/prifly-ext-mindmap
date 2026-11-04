@@ -57,9 +57,7 @@ export function appLinkOf(item: Item): string | undefined {
   }
   if (item.repo === "Trello") {
     const card = url.match(/^https:\/\/trello\.com\/c\/([^/?#]+)/i);
-    return card === null
-      ? undefined
-      : `trello://trello.com/c/${encodeURIComponent(card[1] ?? "")}`;
+    return card === null ? undefined : `trello://trello.com/c/${encodeURIComponent(card[1] ?? "")}`;
   }
   return undefined;
 }
