@@ -55,7 +55,13 @@ function world(): { sessions: Item[]; others: Item[] } {
     mail("m2", "Bob Builder", "bob@builder-ab.se", "Q3 tax report"),
     mail("m3", "Cleo Nordin", "cleo@nordwind.se", "Welcome call next week"),
     chat("cleo", "Cleo Nordin", "See you Thursday"),
-    item({ id: "k:c1", kind: "card", title: "Checkout redesign", repo: "Trello" }),
+    item({
+      id: "k:c1",
+      kind: "card",
+      title: "Checkout redesign",
+      repo: "Trello",
+      column: "In Progress",
+    }),
   ];
   return { sessions, others };
 }

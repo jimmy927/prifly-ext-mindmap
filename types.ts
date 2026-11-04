@@ -100,6 +100,8 @@ export type Item = {
   pinned?: boolean;
   /** The session a card is the ticket of. */
   sessionId?: string;
+  /** For a card: the name of the column it sits in. */
+  column?: string;
   /** A session's own solid links. */
   parentId?: string;
   waitsOn?: string[];

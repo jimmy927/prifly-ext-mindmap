@@ -25,6 +25,8 @@ export type Source = {
   args: (now: number) => Record<string, unknown>;
   /** What a click on one of its items opens, from the item's key; absent: the link the tool gave. */
   link?: (key: string) => string;
+  /** Its `link` is the only link its items get, never one the tool gave. */
+  linkOnly?: boolean;
   /** Its items are always kept: they skip the recency rule and come first under the cap. */
   pinned?: boolean;
   /** A pipe table's columns when it has no header. */
@@ -38,13 +40,38 @@ export type Source = {
 /** Columns that mean work is going on, by a word in their name (any case). */
 export const ACTIVE_COLUMN = /progress|doing|pågår|working|in work|wip|active/i;
 
-/** A card is kept when a session carries it or it sits in an in-progress column. */
-export function keepCard(entry: Entry): boolean {
-  return entry.sessionId !== undefined || ACTIVE_COLUMN.test(entry.column ?? "");
+/** Columns of finished work, as a whole word in their name (any case): never shown. */
+export const DONE_COLUMN = /(?<![\p{L}\p{N}])(?:done|klar|klart|färdig|avslutad)(?![\p{L}\p{N}])/iu;
+
+/** The column of this week's work. */
+export const WEEK_COLUMN = /denna vecka|this week/i;
+
+/** Where a card stands: 0 in progress, 1 this week, 2 another active column, undefined done. */
+function columnRank(column: string | undefined): number | undefined {
+  const name = column ?? "";
+  if (DONE_COLUMN.test(name)) return undefined;
+  if (ACTIVE_COLUMN.test(name)) return 0;
+  return WEEK_COLUMN.test(name) ? 1 : 2;
 }
 
-/** A chat is kept when it is with someone else and had a message in the last 3 days. */
+/**
+ * A card is kept when it is not in a done column and it sits in an
+ * in-progress column, in this week's column, or a session carries it.
+ */
+export function keepCard(entry: Entry): boolean {
+  const rank = columnRank(entry.column);
+  return rank !== undefined && (rank < 2 || entry.sessionId !== undefined);
+}
+
+/** A chat with no name: empty, only digits, plus signs and spaces, or its own id. */
+export function isNameless(entry: Entry): boolean {
+  const name = entry.name.trim();
+  return name === "" || /^[\d+\s]*$/.test(name) || name === entry.key.trim();
+}
+
+/** A chat is kept when it has a name, is with someone else and had a message in the last 3 days. */
 export function keepChat(entry: Entry, now: number, me: string | undefined): boolean {
+  if (isNameless(entry)) return false;
   if (entry.last === undefined || now - entry.last > RECENT_MS) return false;
   return me === undefined || entry.name.trim().toLowerCase() !== me.trim().toLowerCase();
 }
@@ -89,6 +116,7 @@ export const SOURCES: readonly Source[] = [
     everyMs: 5 * MINUTE,
     args: () => ({ limit: 30 }),
     link: whatsappLink,
+    linkOnly: true,
     keep: keepChat,
     needsMe: true,
   },
@@ -149,9 +177,10 @@ function itemOf(source: Source, entry: Entry): Item {
   if (entry.subject !== undefined) item.subject = entry.subject;
   if (entry.head !== undefined) item.head = entry.head;
   if (entry.last !== undefined) item.last = entry.last;
-  const url =
-    source.link === undefined || entry.key.startsWith("#") ? entry.url : source.link(entry.key);
+  const own = source.linkOnly === true || !entry.key.startsWith("#");
+  const url = source.link !== undefined && own ? source.link(entry.key) : entry.url;
   if (url !== undefined) item.url = url;
+  if (source.kind === "card" && entry.column !== undefined) item.column = entry.column;
   if (source.pinned === true) item.pinned = true;
   if (entry.address !== undefined) item.address = entry.address;
   if (entry.sessionId !== undefined) item.sessionId = entry.sessionId;
@@ -311,10 +340,24 @@ export function keepConversations(items: readonly Item[], score: Match, now: num
   return [...pinned, ...matched, ...recent].slice(0, MAX_CONVERSATIONS);
 }
 
-/** The cards worth a circle: those with a session first, then those that match one best; at most `MAX_CARDS`. */
+/**
+ * The cards worth a circle, never one in a done column: In Progress cards
+ * (those a session carries first, then the best matches), then "Denna Vecka"
+ * cards, then cards of any other column that a session carries; at most
+ * `MAX_CARDS`.
+ */
 export function keepCards(items: readonly Item[], score: Match = () => 0): Item[] {
-  const cards = items.filter((item) => item.kind === "card");
-  const ticketed = cards.filter((card) => card.sessionId !== undefined);
-  const rest = cards.filter((card) => card.sessionId === undefined).sort(byMatch(score));
-  return [...ticketed, ...rest].slice(0, MAX_CARDS);
+  const ranked = items.flatMap((card) => {
+    const rank = card.kind === "card" ? columnRank(card.column) : undefined;
+    const kept = rank !== undefined && (rank < 2 || card.sessionId !== undefined);
+    return kept ? [{ card, rank }] : [];
+  });
+  const withSession = (card: Item) => (card.sessionId === undefined ? 1 : 0);
+  const by = byMatch(score);
+  return ranked
+    .sort(
+      (a, b) => a.rank - b.rank || withSession(a.card) - withSession(b.card) || by(a.card, b.card),
+    )
+    .map(({ card }) => card)
+    .slice(0, MAX_CARDS);
 }
