@@ -7,8 +7,11 @@
  * Nothing is grouped or named without the model prifly lends (`api.llm`, the
  * fast tier). A map is "good" only when the model's answer is for the items
  * now; the last good map is kept in `api.state`. Until there is one, `view`
- * answers with why there is none; after one, a failing call leaves the last
- * good map on screen with the reason.
+ * answers with why there is none; after one, a failing call leaves the map
+ * on screen with the reason. The grouping stands while only status, briefs or
+ * last messages change (it depends on the set of ids and titles), and an item
+ * the answer does not know yet is left off until it does. With no answer at
+ * all, the saved map is shown without any item no longer on the map.
  *
  * Nothing runs on a timer: the page asks every few seconds while it is
  * visible, and each ask starts whatever is due in the background (the grouping
@@ -29,7 +32,7 @@ import { sessionItems } from "./sessions";
 import { Sources } from "./sources";
 import { type Picked, pick, relatedOf } from "./topics";
 import { type FactSession, type Item, readToolOf, type Sorting } from "./types";
-import { buildView, type MapView } from "./view";
+import { buildView, type MapView, restrictView } from "./view";
 
 export const SESSIONS_EVERY_MS = 15_000;
 const MAP_STATE = "map";
@@ -54,6 +57,16 @@ export type MapAnswer =
   | { state: "waiting" };
 
 type SavedMap = { view: MapView; at: number };
+
+/** `picked` with only `items`, and the pairs and entities of those. */
+function narrow(picked: Picked, items: Item[]): Picked {
+  const ids = new Set(items.map((item) => item.id));
+  return {
+    items,
+    entities: new Map([...picked.entities].filter(([id]) => ids.has(id))),
+    shared: picked.shared.filter((pair) => ids.has(pair.a) && ids.has(pair.b)),
+  };
+}
 
 export class MindMap {
   private sessions: Item[] = [];
@@ -136,14 +149,28 @@ export class MindMap {
   view(now: number): MapAnswer {
     this.readSessions(now);
     this.pending = this.refresh(now);
-    const map = this.currentMap(now);
-    if (map !== null) {
+    const picked = this.pick(now);
+    const answered = this.grouper.answerFor(picked.items);
+    if (answered !== null) {
+      const map = this.render(picked, answered);
       this.keep(map, now);
       return { state: "map", map, updatedAt: now, current: true, error: null };
     }
     const error = this.grouper.error();
-    if (this.good !== null)
-      return { state: "map", map: this.good.view, updatedAt: this.good.at, current: false, error };
+    const at = this.good?.at ?? now;
+    // The model has not grouped these items yet: draw those its last answer knows,
+    // with their present state; an item it does not know joins after the answer.
+    const partial = this.grouper.partialFor(picked.items);
+    if (partial !== null) {
+      const map = this.render(narrow(picked, partial.items), partial.answered);
+      return { state: "map", map, updatedAt: at, current: false, error };
+    }
+    // No answer to draw from: the last saved map, less whatever is no longer on the map.
+    const saved =
+      this.good === null
+        ? null
+        : restrictView(this.good.view, new Set(picked.items.map((item) => item.id)));
+    if (saved !== null) return { state: "map", map: saved, updatedAt: at, current: false, error };
     return error === null ? { state: "waiting" } : { state: "error", error };
   }
 
@@ -168,13 +195,6 @@ export class MindMap {
   /** Wait for the reads and the call the last `view` started (for tests). */
   settle(): Promise<void> {
     return this.pending;
-  }
-
-  /** The map for the items now, or null while the model has not grouped them. */
-  private currentMap(now: number): MapView | null {
-    const picked = this.pick(now);
-    const answered = this.grouper.answerFor(picked.items);
-    return answered === null ? null : this.render(picked, answered);
   }
 
   /** Remember a good map as the last one; in `api.state` when it changed, else at most once a minute. */

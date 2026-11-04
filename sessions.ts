@@ -11,13 +11,15 @@ function isSummariserFolder(cwd: string): boolean {
 }
 
 /**
- * A leftover nobody looks at: an ended session (whatever its folder or title:
- * probes, untitled sessions, reports and folds end up there), an archived one,
- * an agent's report or a summariser fold. Every other state stays, a snoozed
- * session too.
+ * Noise: a session that is not running, not waiting on the reader and not in
+ * error. That is an ended one (whatever its folder or title), an archived
+ * one, a snoozed one (even in error: the reader asked for quiet), an idle
+ * one, an agent's report or a summariser fold. What stays is working,
+ * starting, agents, background, waiting, asking the reader, and error.
  */
-export function isLeftover(session: FactSession): boolean {
+export function isLeftover(session: FactSession, now: number): boolean {
   if (session.state === "ended" || session.archived === true) return true;
+  if (snoozed(session, now) || statusOf(session, now) === "idle") return true;
   if (session.title.trim().startsWith("# The agent's report")) return true;
   return isSummariserFolder(session.cwd);
 }
@@ -91,10 +93,10 @@ function itemOf(session: FactSession, now: number): Item {
   return item;
 }
 
-/** The sessions worth a circle, as items: leftovers dropped, at most `MAX_SESSIONS`. */
+/** The sessions worth a circle, as items: only running, waiting and error ones, at most `MAX_SESSIONS`. */
 export function sessionItems(sessions: readonly FactSession[], now: number): Item[] {
   return sessions
-    .filter((session) => !isLeftover(session))
+    .filter((session) => !isLeftover(session, now))
     .slice(0, MAX_SESSIONS)
     .map((session) => itemOf(session, now));
 }

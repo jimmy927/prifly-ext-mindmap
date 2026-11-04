@@ -4,7 +4,7 @@
  * nothing marked read. A missing or failing source is skipped and named.
  */
 
-import { type Entry, parseListing } from "./parse";
+import { type Entry, parseListing, personOf } from "./parse";
 import type { Item, ReadTool } from "./types";
 
 const MINUTE = 60_000;
@@ -28,7 +28,25 @@ export type Source = {
   pinned?: boolean;
   /** A pipe table's columns when it has no header. */
   columns?: string[];
+  /** Whether an entry earns a circle; `me` is the reader's own name when known. Absent: all do. */
+  keep?: (entry: Entry, now: number, me: string | undefined) => boolean;
+  /** Needs the reader's own name (`keep` leaves out their chat with themselves). */
+  needsMe?: boolean;
 };
+
+/** Columns that mean work is going on, by a word in their name (any case). */
+export const ACTIVE_COLUMN = /progress|doing|pågår|working|in work|wip|active/i;
+
+/** A card is kept when a session carries it or it sits in an in-progress column. */
+export function keepCard(entry: Entry): boolean {
+  return entry.sessionId !== undefined || ACTIVE_COLUMN.test(entry.column ?? "");
+}
+
+/** A chat is kept when it is with someone else and had a message in the last 3 days. */
+export function keepChat(entry: Entry, now: number, me: string | undefined): boolean {
+  if (entry.last === undefined || now - entry.last > RECENT_MS) return false;
+  return me === undefined || entry.name.trim().toLowerCase() !== me.trim().toLowerCase();
+}
 
 /** The query for the threads the reader wants on the map: every starred one, every unread one in the inbox. */
 export const GMAIL_QUERY = "is:starred OR (is:unread in:inbox)";
@@ -69,6 +87,8 @@ export const SOURCES: readonly Source[] = [
     kind: "conversation",
     everyMs: 5 * MINUTE,
     args: () => ({ limit: 30 }),
+    keep: keepChat,
+    needsMe: true,
   },
   gmailSource(),
   {
@@ -79,13 +99,13 @@ export const SOURCES: readonly Source[] = [
     args: (now) => ({ query: `received>=${isoDay(now - RECENT_MS)}`, max: 30 }),
   },
   {
-    tool: "telegram_chats",
-    service: "Telegram",
-    kind: "conversation",
+    tool: "trello_cards",
+    service: "Trello",
+    kind: "card",
     everyMs: 5 * MINUTE,
-    args: () => ({ limit: 30 }),
+    args: () => ({}),
+    keep: keepCard,
   },
-  { tool: "trello_cards", service: "Trello", kind: "card", everyMs: 5 * MINUTE, args: () => ({}) },
   // Driven through the reader's browser: read less often.
   {
     tool: "instagram_inbox",
@@ -142,20 +162,54 @@ function itemOf(source: Source, entry: Entry): Item {
  * signed in.", "Trello is not connected"), and is taken as a failure, so the
  * footer names it.
  */
-export async function readSource(read: ReadTool, source: Source, now: number): Promise<Item[]> {
+export async function readSource(
+  read: ReadTool,
+  source: Source,
+  now: number,
+  me?: string,
+): Promise<Item[]> {
   const raw = await read(source.tool, source.args(now));
   const entries = parseListing(raw, source.columns);
   const text = raw.trim();
   if (entries.length === 0 && text !== "" && !/^[[{]/.test(text)) {
     throw new Error(text.split("\n")[0] ?? text);
   }
-  return entries.map((entry) => itemOf(source, entry));
+  const keep = source.keep;
+  return entries
+    .filter((entry) => keep === undefined || keep(entry, now, me))
+    .map((entry) => itemOf(source, entry));
+}
+
+/** Sent threads asked for to learn the reader's name: the sender most of them show is the reader. */
+const SENT_QUERY = "in:sent";
+const ME_EVERY_MS = 24 * 60 * MINUTE;
+const ME_RETRY_MS = 60 * MINUTE;
+
+/**
+ * The reader's own name: the most frequent sender on their sent Gmail
+ * threads. Undefined when Gmail gives none.
+ */
+export async function readerName(read: ReadTool): Promise<string | undefined> {
+  const entries = parseListing(await read("gmail_search", { query: SENT_QUERY, max: 10 }), [
+    "thread_id",
+    "messages",
+    "date",
+    "from",
+    "subject",
+  ]);
+  const counts = new Map<string, number>();
+  for (const entry of entries) {
+    const name = personOf(entry.name);
+    if (name !== "" && !name.includes("@")) counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return [...counts].sort((a, b) => b[1] - a[1])[0]?.[0];
 }
 
 /** Reads each source when it is due, one call each, and keeps what it last gave. */
 export class Sources {
   private readonly reads = new Map<string, Read>();
   private readonly busy = new Set<string>();
+  private me: { name: string | undefined; at: number } | null = null;
 
   private readonly read: ReadTool | null;
   private readonly sources: readonly Source[];
@@ -179,7 +233,8 @@ export class Sources {
   private async one(read: ReadTool, source: Source, now: number): Promise<void> {
     this.busy.add(source.tool);
     try {
-      const items = await readSource(read, source, now);
+      const me = source.needsMe === true ? await this.meOf(read, now) : undefined;
+      const items = await readSource(read, source, now, me);
       this.reads.set(source.tool, { at: now, items, error: null });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -187,6 +242,21 @@ export class Sources {
     } finally {
       this.busy.delete(source.tool);
     }
+  }
+
+  /** The reader's name, read once a day (an hour after a miss); never fails a source. */
+  private async meOf(read: ReadTool, now: number): Promise<string | undefined> {
+    const known = this.me;
+    if (known !== null && now - known.at < (known.name === undefined ? ME_RETRY_MS : ME_EVERY_MS))
+      return known.name;
+    let name: string | undefined;
+    try {
+      name = await readerName(read);
+    } catch {
+      name = undefined;
+    }
+    this.me = { name: name ?? known?.name, at: now };
+    return this.me.name;
   }
 
   /** Everything the sources last gave. */

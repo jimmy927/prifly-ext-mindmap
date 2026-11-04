@@ -10,7 +10,7 @@ and it opens over nearly the whole window.
   theme. Each session, conversation and card hangs off its theme, with its
   title in bold and two short summary lines.
 - A dot on each session's rim says how it stands: green running, amber waiting
-  on you, red error, grey idle or snoozed.
+  on you, red error. (Idle and snoozed sessions are not drawn at all.)
 - **Solid arrows** are links prifly knows: a session _started_ another, a
   session _waits on_ another, a card is a session's _ticket_. **Dashed curves**
   with an italic label join items about the same thing, labelled by what they
@@ -33,26 +33,37 @@ changes the mailbox.
 The page asks for the map every 5 s while it is visible, and not at all while it
 is hidden; nothing is read for a closed map. Each ask starts what is due:
 
-| What                                                                                                                  | How often                                                                          |
-| --------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
-| Sessions (`api.sessions()`)                                                                                           | every 15 s, so a new session shows within 15 s                                     |
-| WhatsApp, Gmail (`is:starred OR (is:unread in:inbox)`), Outlook (received in the last 3 days), Telegram, Trello cards | every 5 min                                                                        |
-| Instagram, LinkedIn, Messenger (they drive your browser)                                                              | every 15 min                                                                       |
-| Grouping and naming (`api.llm.ask`, the fast tier)                                                                    | one call when the items changed, at most once a minute                             |
-| Summary lines (`api.llm.ask`, the fast tier)                                                                          | batches of 20, only for items whose text is new or changed, one batch per page ask |
+| What                                                                                                        | How often                                                                          |
+| ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| Sessions (`api.sessions()`)                                                                                 | every 15 s, so a new session shows within 15 s                                     |
+| WhatsApp, Gmail (`is:starred OR (is:unread in:inbox)`), Outlook (received in the last 3 days), Trello cards | every 5 min                                                                        |
+| Instagram, LinkedIn, Messenger (they drive your browser)                                                    | every 15 min                                                                       |
+| Grouping and naming (`api.llm.ask`, the fast tier)                                                          | one call when the items changed, at most once a minute                             |
+| Summary lines (`api.llm.ask`, the fast tier)                                                                | batches of 20, only for items whose text is new or changed, one batch per page ask |
 
 Each source is one listing call through `api.tools.read` - never a loop over
 threads, and nothing is marked read. A missing or failing source is skipped and
-named in the footer. Every conversation the listings give is matched against the
-sessions; up to 20 are drawn - first the Gmail threads (every starred thread,
-and every unread thread in the inbox, whatever their age: one `gmail_search`
-call, max 30), then those that match a session best first (recency only breaks
-ties), then any with a message in the last 3 days - and up to 15
-cards, those with a session first, then the best matches. Ended sessions
-(state "ended", whatever their folder or title: probes, untitled sessions,
-reports, folds) are left out, as are archived ones, agent reports and prifly's
-summariser folds. Every other state stays, snoozed sessions included, and at
-most 40 sessions are drawn.
+named in the footer. The map shows only what matters now, so most of what the
+tools list is left out:
+
+- **Sessions**: only running (working, starting, agents, background), waiting
+  on you (waiting, or asking you) and error. Idle, snoozed (a `snoozedUntil` in
+  the future, even on an error), ended and archived sessions, agent reports and
+  prifly's summariser folds are not drawn. At most 40 sessions.
+- **Gmail**: starred threads and unread threads in the inbox (one
+  `gmail_search`, max 30), whatever their age.
+- **WhatsApp**: only chats with someone else that had a message in the last 3
+  days. The listing does not mark the reader's own chat, so the reader's name is
+  taken from the most frequent sender on their sent Gmail threads (one
+  `gmail_search` for `in:sent`, once a day) and a chat of that name is left out.
+  Without Gmail nothing is left out as the reader's own chat.
+- **Trello**: only cards a session carries (`sessionId`) or that sit in an
+  in-progress column (a name containing progress, doing, pågår, working, in
+  work, wip or active, any case). At most 15.
+- **Outlook, Instagram, LinkedIn, Messenger**: as listed, kept when they match
+  a session or had a message in the last 3 days. At most 20 conversations in
+  all, Gmail first, then the best session matches.
+- **Telegram** is not read.
 
 Conversations and cards need prifly's `read-tools` feature, and the solid links
 and brief summaries its `session-facts` feature. On a prifly without them the map
@@ -150,9 +161,14 @@ reader sees when prifly has no model for the map:
   failure), and the map appears on its own once the model answers.
 - **After a good map**: the same reasons leave the last good map on screen as it
   was (positions, themes, names), with the reason in the footer and when the map
-  was last updated ("Last updated 14:32"). A change in the items, such as a new
-  session, shows once the model has grouped it; until then the last good map
-  stays. A failing summary-line batch is not an error of the map: it shows
+  was last updated ("Last updated 14:32"). The grouping depends only on which
+  items there are and their titles and subjects, so a change of status, brief or
+  last message re-renders at once with the grouping that stands (the summary
+  lines are the liner's job). An item the answer does not know yet is left off
+  until the model has grouped it; the rest is drawn from the existing answer.
+  Only when there is no answer at all is the saved map shown, and then without
+  every circle and link whose item is no longer on the map: the map never shows
+  an item that is not in the current reads. A failing summary-line batch is not an error of the map: it shows
   without those lines and the batch is tried again after a minute.
 
 ## The layout

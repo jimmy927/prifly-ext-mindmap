@@ -18,6 +18,8 @@ export type Entry = {
   address?: string;
   /** For a card: the session it is the ticket of. */
   sessionId?: string;
+  /** For a card: the name of the column it sits in. */
+  column?: string;
 };
 
 const HEAD_CHARS = 200;
@@ -160,6 +162,8 @@ function withJsonExtras(entry: Entry, record: Json, lastMessage: unknown): Entry
   if (url !== undefined && /^https?:\/\//.test(url)) entry.url = url;
   const session = text(pick(record, ["sessionId", "session_id", "session"]));
   if (session !== undefined && /^[0-9a-f]{8}/i.test(session)) entry.sessionId = session;
+  const column = text(pick(record, ["column", "list"]));
+  if (column !== undefined) entry.column = cut(column, 60);
   return entry;
 }
 

@@ -24,7 +24,6 @@ export const SERVICE_COLOURS: Record<string, string> = {
   WhatsApp: "#25d366",
   Gmail: "#ea4335",
   Outlook: "#0078d4",
-  Telegram: "#229ed9",
   Instagram: "#e1306c",
   LinkedIn: "#0a66c2",
   Messenger: "#0084ff",
@@ -91,6 +90,34 @@ export function assignColours(
     live.set(id, free ?? THEME_COLOURS[live.size % THEME_COLOURS.length] ?? "#2a78d6");
   }
   return live;
+}
+
+/**
+ * `view` with only the circles whose item is in `ids`: a node whose item has
+ * gone, every link to one, and any theme left with no node. Adds nothing.
+ * Null when nothing is left.
+ */
+export function restrictView(view: MapView, ids: ReadonlySet<string>): MapView | null {
+  const nodes = view.nodes.filter((node) => ids.has(node.id));
+  if (nodes.length === 0) return null;
+  const themes = new Set(nodes.map((node) => node.theme));
+  const count = (kind: Item["kind"]) => nodes.filter((node) => node.kind === kind).length;
+  const services = new Set(
+    nodes.flatMap((node) => (node.service === undefined ? [] : [node.service])),
+  );
+  return {
+    ...view,
+    themes: view.themes.filter((theme) => themes.has(theme.id)),
+    nodes,
+    links: view.links.filter((link) => ids.has(link.a) && ids.has(link.b)),
+    legend: { services: view.legend.services.filter((s) => services.has(s.name)) },
+    footer: {
+      ...view.footer,
+      sessions: count("session"),
+      conversations: count("conversation"),
+      cards: count("card"),
+    },
+  };
 }
 
 export type ViewInput = {

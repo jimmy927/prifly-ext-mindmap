@@ -139,7 +139,13 @@ let counter = 0;
 export function session(fields: Partial<FactSession> = {}): FactSession {
   counter += 1;
   const id = `${counter.toString(16).padStart(8, "0")}-0000-4000-8000-000000000000`;
-  return { id, title: `task ${counter}`, cwd: "/home/ada/src/widgets", state: "idle", ...fields };
+  return {
+    id,
+    title: `task ${counter}`,
+    cwd: "/home/ada/src/widgets",
+    state: "working",
+    ...fields,
+  };
 }
 
 export function item(fields: Partial<Item> & { id: string }): Item {

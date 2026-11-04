@@ -30,7 +30,6 @@ import {
   type Pair,
   type PreviousTopic,
   parseGrouping,
-  promptItem,
   retryRequest,
 } from "./sorting";
 import type { Picked } from "./topics";
@@ -61,9 +60,15 @@ export const NOTHING: Answered = {
   backend: "claude",
 };
 
-/** What changes the call: the items as the model is told of them, not their state or places. */
+/**
+ * What changes the call: which items there are and what they are called (id,
+ * title, subject), in any order. Not their status, brief, last message or
+ * time: those change all the time and the grouping stands.
+ */
 export function fingerprintOf(items: readonly Item[]): string {
-  const told = items.map((item) => promptItem(item, item.id));
+  const told = items
+    .map((item) => [item.id, item.title, item.subject ?? ""])
+    .sort((a, b) => ((a[0] ?? "") < (b[0] ?? "") ? -1 : 1));
   return createHash("sha1").update(JSON.stringify(told)).digest("hex");
 }
 
@@ -111,6 +116,18 @@ export class Grouper {
   answerFor(items: readonly Item[]): Answered | null {
     if (items.length === 0) return NOTHING;
     return this.answered?.fingerprint === fingerprintOf(items) ? this.answered : null;
+  }
+
+  /**
+   * The last answer and the items it covers, while the model has not yet
+   * answered for exactly these: `items` less those the answer does not know.
+   * Null when there is no answer or it knows none of them.
+   */
+  partialFor(items: readonly Item[]): { answered: Answered; items: Item[] } | null {
+    const answered = this.answered;
+    if (answered === null) return null;
+    const known = items.filter((item) => answered.topicOf[item.id] !== undefined);
+    return known.length === 0 ? null : { answered, items: known };
   }
 
   /** The topics of the last answer, with their members: a hint, so topics stay stable. */

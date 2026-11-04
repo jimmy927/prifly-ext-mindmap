@@ -39,18 +39,50 @@ test("ended probe-titled and untitled sessions are left out", () => {
   expect(sessionItems(sessions, NOW)).toEqual([]);
 });
 
-test("idle, waiting, working and snoozed sessions are kept", () => {
-  const cwd = "/home/ada/src/shop";
-  const snoozedUntil = new Date(NOW + 3_600_000).toISOString();
-  const kept = [
-    session({ title: "A", cwd, state: "idle" }),
-    session({ title: "B", cwd, state: "waiting" }),
-    session({ title: "C", cwd, state: "working" }),
-    session({ title: "D", cwd, state: "idle", snoozedUntil }),
+const CWD = "/home/ada/src/shop";
+const kept = (sessions: ReturnType<typeof session>[]) =>
+  sessionItems(sessions, NOW).map((item) => item.id);
+
+test("working, starting, agents and background sessions are kept as running", () => {
+  const sessions = ["working", "starting", "agents", "background"].map((state) =>
+    session({ cwd: CWD, state: state as "working" }),
+  );
+  expect(kept(sessions)).toEqual(sessions.map((s) => s.id));
+  expect(sessionItems(sessions, NOW).every((i) => i.status === "running")).toBe(true);
+});
+
+test("waiting, asking the reader, and error sessions are kept", () => {
+  const sessions = [
+    session({ cwd: CWD, state: "waiting" }),
+    session({ cwd: CWD, state: "idle", asksYou: true }),
+    session({ cwd: CWD, state: "error" }),
   ];
-  const ended = session({ title: "E", cwd, state: "ended" });
-  const ids = sessionItems([ended, ...kept], NOW).map((item) => item.id);
-  expect(ids).toEqual(kept.map((s) => s.id));
+  expect(sessionItems(sessions, NOW).map((i) => i.status)).toEqual(["waiting", "waiting", "error"]);
+});
+
+test("idle, snoozed (even in error or working), ended and archived sessions are dropped", () => {
+  const snoozedUntil = new Date(NOW + 3_600_000).toISOString();
+  const past = new Date(NOW - 3_600_000).toISOString();
+  const dropped = [
+    session({ cwd: CWD, state: "idle" }),
+    session({ cwd: CWD, state: "working", snoozedUntil }),
+    session({ cwd: CWD, state: "error", snoozedUntil }),
+    session({ cwd: CWD, state: "waiting", snoozedUntil }),
+    session({ cwd: CWD, state: "ended" }),
+    session({ cwd: CWD, state: "working", archived: true }),
+  ];
+  expect(kept(dropped)).toEqual([]);
+  // A snooze that has run out no longer hides the session.
+  const woken = session({ cwd: CWD, state: "working", snoozedUntil: past });
+  expect(kept([woken])).toEqual([woken.id]);
+});
+
+test("an agent's report and a summariser fold stay off even when running", () => {
+  const sessions = [
+    session({ cwd: CWD, state: "working", title: "# The agent's report" }),
+    session({ cwd: "/home/ada/.local/prifly/host/summariser", state: "working" }),
+  ];
+  expect(kept(sessions)).toEqual([]);
 });
 
 test("an archived session is still left out", () => {

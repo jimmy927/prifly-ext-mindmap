@@ -312,7 +312,7 @@ describe("the map and the lines", () => {
 
   test("first load of 40 sessions: one grouping call, then a batch of 20 on each tick, and the lines appear", async () => {
     const sess = Array.from({ length: 40 }, (_, i) =>
-      session({ title: `Job ${i} for the shop`, cwd: "/home/ada/src/shop", state: "idle" }),
+      session({ title: `Job ${i} for the shop`, cwd: "/home/ada/src/shop", state: "working" }),
     );
     const fake = model();
     const map = new MindMap(fakeApi({ sessions: sess, ask: fake.ask }));
