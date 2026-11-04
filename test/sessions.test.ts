@@ -33,11 +33,9 @@ test("an ended session in a normal repo is left out", () => {
 
 test("ended probe-titled and untitled sessions are left out", () => {
   const cwd = "/home/jimmy/src/odi.worktrees/odi-159";
-  const sessions = [
-    "Run exactly this one Bash command, verbatim, once",
-    "untitled",
-    "",
-  ].map((title) => session({ title, cwd, state: "ended" }));
+  const sessions = ["Run exactly this one Bash command, verbatim, once", "untitled", ""].map(
+    (title) => session({ title, cwd, state: "ended" }),
+  );
   expect(sessionItems(sessions, NOW)).toEqual([]);
 });
 
@@ -56,6 +54,11 @@ test("idle, waiting, working and snoozed sessions are kept", () => {
 });
 
 test("an archived session is still left out", () => {
-  const archived = session({ title: "Old", cwd: "/home/ada/src/shop", state: "idle", archived: true });
+  const archived = session({
+    title: "Old",
+    cwd: "/home/ada/src/shop",
+    state: "idle",
+    archived: true,
+  });
   expect(sessionItems([archived], NOW)).toEqual([]);
 });
