@@ -65,9 +65,9 @@ in Trello" open the desktop apps (`appLinkOf` in `opening.ts`):
 
 - WhatsApp chat with a real phone id: `whatsapp://send?phone=<number>`.
 - Every other WhatsApp chat (`@lid`, `@g.us`): `whatsapp://`, the app itself.
-- Trello card: `trello://x-callback-url/showCard?shortlink=<shortlink>`, the
-  form Atlassian documents for its URL scheme; the shortlink is taken from the
-  card url `https://trello.com/c/<shortlink>/...`.
+- Trello card: `trello://trello.com/c/<shortlink>`, which opens the card
+  itself in the Trello Windows app (Atlassian's `x-callback-url` form only
+  opens the app); the shortlink is taken from the card url `https://trello.com/c/<shortlink>/...`.
 
 When `openUrl` answers false for the app link (no app registered for the
 scheme), the web link is opened at once instead. Gmail, Outlook and the other

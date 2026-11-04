@@ -182,7 +182,7 @@ describe("api/open", () => {
     expect(asked).toEqual([
       "whatsapp://send?phone=46701234567",
       "whatsapp://",
-      "trello://x-callback-url/showCard?shortlink=abc123",
+      "trello://trello.com/c/abc123",
       "https://mail.google.com/mail/u/0/#all/t9",
     ]);
   });
@@ -222,7 +222,7 @@ describe("api/open", () => {
     expect(asked).toEqual([
       "whatsapp://send?phone=46701234567",
       "https://wa.me/46701234567",
-      "trello://x-callback-url/showCard?shortlink=abc123",
+      "trello://trello.com/c/abc123",
       CARD_URL,
     ]);
   });
@@ -234,7 +234,7 @@ describe("api/open", () => {
       repo: "Trello",
       url: "https://trello.com/c/Xy12AbCd/34-fix-refunds",
     });
-    expect(appLinkOf(card)).toBe("trello://x-callback-url/showCard?shortlink=Xy12AbCd");
+    expect(appLinkOf(card)).toBe("trello://trello.com/c/Xy12AbCd");
     expect(appLinkOf({ ...card, repo: "Gmail" })).toBeUndefined();
   });
 

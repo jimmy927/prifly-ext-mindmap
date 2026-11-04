@@ -44,8 +44,9 @@ export function linkOf(item: Item): string | undefined {
  * Outlook and the rest stay web links). WhatsApp chat with a real phone id:
  * `whatsapp://send?phone=<digits>`; any other WhatsApp chat (`@lid`, `@g.us`):
  * `whatsapp://` (the app itself). Trello card: Atlassian's
- * `trello://x-callback-url/showCard?shortlink=<shortlink>`, the shortlink
- * being taken from the card url `https://trello.com/c/<shortlink>/...`.
+ * `trello://trello.com/c/<shortlink>` (the form that opens the card in the
+ * Trello Windows app), the shortlink being taken from the card url
+ * `https://trello.com/c/<shortlink>/...`.
  */
 export function appLinkOf(item: Item): string | undefined {
   const url = linkOf(item);
@@ -58,7 +59,7 @@ export function appLinkOf(item: Item): string | undefined {
     const card = url.match(/^https:\/\/trello\.com\/c\/([^/?#]+)/i);
     return card === null
       ? undefined
-      : `trello://x-callback-url/showCard?shortlink=${encodeURIComponent(card[1] ?? "")}`;
+      : `trello://trello.com/c/${encodeURIComponent(card[1] ?? "")}`;
   }
   return undefined;
 }
