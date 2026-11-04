@@ -91,7 +91,7 @@ test("WhatsApp: a chat with no time is dropped", async () => {
   expect(sources.items()).toEqual([]);
 });
 
-test("Trello: a card with a session or in an in-progress column stays, others go", async () => {
+test("Trello: in-progress and this week's cards stay, a done one never does, others only with a session", async () => {
   const card = (id: string, column: string, sessionId: string | null) => ({
     id,
     name: `Card ${id}`,
@@ -129,6 +129,6 @@ test("Trello: a card with a session or in an in-progress column stays, others go
     "k:c5",
     "k:c6",
     "k:c7",
-    "k:c8",
+    "k:c10",
   ]);
 });

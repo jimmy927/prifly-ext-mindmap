@@ -6,6 +6,7 @@ import {
   keepCards,
   keepConversations,
   MAX_CONVERSATIONS,
+  SOURCES,
   type Source,
   Sources,
 } from "../sources";
@@ -210,13 +211,91 @@ describe("which conversations and cards are kept", () => {
     expect(kept[3]?.id).toBe("c:new0");
   });
 
-  test("cards with a session first, at most 15", () => {
+  test("in-progress cards with a session first, at most 15", () => {
     const cards = Array.from({ length: 20 }, (_, i) =>
-      item({ id: `k:${i}`, kind: "card", ...(i === 19 ? { sessionId: "aaaaaaaa" } : {}) }),
+      item({
+        id: `k:${i}`,
+        kind: "card",
+        column: "In Progress",
+        ...(i === 19 ? { sessionId: "aaaaaaaa" } : {}),
+      }),
     );
     const kept = keepCards(cards);
     expect(kept).toHaveLength(15);
     expect(kept[0]?.id).toBe("k:19");
+  });
+
+  test("a card in a done column is never kept, with a session or without", () => {
+    const done = ["DONE", "Done", "klar", "Klart", "Färdig", "avslutad"].map((column, i) =>
+      item({ id: `k:d${i}`, kind: "card", column, sessionId: "aaaaaaaa" }),
+    );
+    const working = item({ id: "k:w", kind: "card", column: "In Progress" });
+    expect(keepCards([...done, working]).map((i) => i.id)).toEqual(["k:w"]);
+  });
+
+  test("In Progress, then Denna Vecka, then other columns with a session; the rest stay out", () => {
+    const card = (id: string, column: string, session = false) =>
+      item({ id, kind: "card", column, ...(session ? { sessionId: "aaaaaaaa" } : {}) });
+    const kept = keepCards([
+      card("k:wait-s", "Avvaktar", true),
+      card("k:month", "Denna Månad"),
+      card("k:week", "Denna Vecka"),
+      card("k:done", "DONE", true),
+      card("k:prog", "In Progress"),
+      card("k:month-s", "Denna Månad", true),
+      card("k:prog-s", "In Progress", true),
+      card("k:wait", "Avvaktar"),
+    ]);
+    expect(kept.map((i) => i.id)).toEqual([
+      "k:prog-s",
+      "k:prog",
+      "k:week",
+      "k:wait-s",
+      "k:month-s",
+    ]);
+  });
+
+  test("a read of Trello keeps its column and drops done cards before they are items", async () => {
+    const raw = JSON.stringify([
+      { id: "a", name: "Ship it", column: "DONE", sessionId: "aaaaaaaa" },
+      { id: "b", name: "Write it", column: "In Progress" },
+      { id: "c", name: "Plan it", column: "Avvaktar" },
+      { id: "d", name: "This week", column: "Denna Vecka" },
+    ]);
+    const s = new Sources(
+      async () => raw,
+      [SOURCES.find((x) => x.tool === "trello_cards") as Source],
+    );
+    await s.refresh(NOW);
+    expect(s.items().map((i) => [i.title, i.column])).toEqual([
+      ["Write it", "In Progress"],
+      ["This week", "Denna Vecka"],
+    ]);
+  });
+});
+
+describe("WhatsApp chats with no name", () => {
+  test("an empty name, a number or the chat's own id is dropped; a named chat stays", async () => {
+    const raw = [
+      "- **Ada Test** `100000000000001@lid` · 2026-11-02 10:00 UTC",
+      "  hi",
+      "- **100000000000002@lid** `100000000000002@lid` · 2026-11-02 10:00 UTC",
+      "  hi",
+      "- **+46 70 123 45 67** `46701234567@s.whatsapp.net` · 2026-11-02 10:00 UTC",
+      "  hi",
+      "- **100000000000003** `100000000000003@lid` · 2026-11-02 10:00 UTC",
+      "  hi",
+    ].join("\n");
+    const whatsapp = SOURCES.find((x) => x.tool === "whatsapp_chats") as Source;
+    const s = new Sources(async (name) => (name === "whatsapp_chats" ? raw : ""), [whatsapp]);
+    await s.refresh(NOW);
+    expect(s.items().map((i) => i.title)).toEqual(["Ada Test"]);
+    const json = JSON.stringify([
+      { id: "100000000000004@lid", name: "", time: "2026-11-02T10:00:00Z" },
+    ]);
+    const empty = new Sources(async () => json, [whatsapp]);
+    await empty.refresh(NOW);
+    expect(empty.items()).toEqual([]);
   });
 });
 

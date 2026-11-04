@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { MindMap } from "../mindmap";
 import { appLinkOf, menuFor, whatsappLink } from "../opening";
-import { gmailThreadUrl } from "../sources";
+import { gmailThreadUrl, SOURCES, type Source, Sources } from "../sources";
 import type { Item } from "../types";
 import { fakeApi, goodText, item, model, sentIn, session } from "./fake";
 
@@ -16,6 +16,8 @@ const CHATS = [
   "  See you at five",
   "- **Book club** (group) `b1@g.us` · 2026-11-02 09:00 UTC",
   "  [image]",
+  "- **Maryam Test** `204951661879550@lid` · 2026-11-02 08:00 UTC",
+  "  Hello",
 ].join("\n");
 const CARDS = JSON.stringify([
   { id: "c1", name: "Fix refunds", url: CARD_URL, sessionId: "aaaaaaaa" },
@@ -78,6 +80,26 @@ describe("links", () => {
     expect(whatsappLink("46701234567:12@s.whatsapp.net")).toBe("https://wa.me/46701234567");
     expect(whatsappLink("120363041234567890@g.us")).toBe("https://web.whatsapp.com/");
     expect(whatsappLink("a1@lid")).toBe("https://web.whatsapp.com/");
+  });
+
+  test("WhatsApp: an @lid or @g.us id never gets a phone link, even with digits", () => {
+    expect(whatsappLink("204951661879550@lid")).toBe("https://web.whatsapp.com/");
+    expect(whatsappLink("120363000000000001@g.us")).toBe("https://web.whatsapp.com/");
+    expect(whatsappLink("46701234567@c.us")).toBe("https://wa.me/46701234567");
+  });
+
+  test("WhatsApp: the tool's own link is never used for a chat, only the id's", async () => {
+    const s = new Sources(
+      async (name) =>
+        name === "whatsapp_chats"
+          ? JSON.stringify([
+              { name: "Ada", time: "2026-11-02T10:00:00Z", url: "https://wa.me/204951661879550" },
+            ])
+          : "",
+      [SOURCES[0] as Source],
+    );
+    await s.refresh(NOW);
+    expect(s.items()[0]?.url).toBe("https://web.whatsapp.com/");
   });
 
   test("Gmail and Trello links are as they were", async () => {
@@ -163,6 +185,24 @@ describe("api/open", () => {
       "trello://x-callback-url/showCard?shortlink=abc123",
       "https://mail.google.com/mail/u/0/#all/t9",
     ]);
+  });
+
+  test("with open-url-apps an @lid chat and a group open the app itself, never a phone", async () => {
+    const { map, node, asked } = await drawn(async () => true, true);
+    for (const title of ["Maryam", "Book club"]) {
+      await map.open({ id: node(title).id, target: node(title).id });
+    }
+    expect(asked).toEqual(["whatsapp://", "whatsapp://"]);
+  });
+
+  test("without open-url-apps an @lid chat opens WhatsApp Web; with an app refused, Web at once", async () => {
+    const web = await drawn(async () => true);
+    await web.map.open({ id: web.node("Maryam").id, target: web.node("Maryam").id });
+    expect(web.asked).toEqual(["https://web.whatsapp.com/"]);
+    const refused = await drawn(async (url) => /^https:/.test(url), true);
+    const maryam = refused.node("Maryam");
+    expect(await refused.map.open({ id: maryam.id, target: maryam.id })).toEqual({ opened: true });
+    expect(refused.asked).toEqual(["whatsapp://", "https://web.whatsapp.com/"]);
   });
 
   test("without open-url-apps the web links open", async () => {

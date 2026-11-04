@@ -49,17 +49,19 @@ The links:
   `https://mail.google.com/mail/?authuser=<email>#all/<thread_id>` when the read
   was for a named account.
 - Trello and the other services: the link their tool gave.
-- WhatsApp: for a person, `https://wa.me/<number>` (the digits of the chat id,
-  `46701234567@s.whatsapp.net` gives `46701234567`), which the browser hands to
-  the installed WhatsApp app; a group has no deep link, so it is
-  `https://web.whatsapp.com/`.
+- WhatsApp: only a real phone id (`<digits>@s.whatsapp.net` or `@c.us`) gets a
+  phone link, `https://wa.me/<number>` (`46701234567@s.whatsapp.net` gives
+  `46701234567`), which the browser hands to the installed WhatsApp app. Every
+  other chat is `https://web.whatsapp.com/`: a person's `@lid` id is WhatsApp's
+  internal linked id, not a phone number, and a group (`@g.us`) has no deep
+  link. A link is never built from the digits of such an id.
 
 Without prifly's feature "open-url-apps", `openUrl` accepts only http and
 https, and the links above are what opens. With it, "Open in WhatsApp" and "Open
 in Trello" open the desktop apps (`appLinkOf` in `opening.ts`):
 
-- WhatsApp person: `whatsapp://send?phone=<number>`.
-- WhatsApp group: `whatsapp://`, the app itself (a group has no deep link).
+- WhatsApp chat with a real phone id: `whatsapp://send?phone=<number>`.
+- Every other WhatsApp chat (`@lid`, `@g.us`): `whatsapp://`, the app itself.
 - Trello card: `trello://x-callback-url/showCard?shortlink=<shortlink>`, the
   form Atlassian documents for its URL scheme; the shortlink is taken from the
   card url `https://trello.com/c/<shortlink>/...`.
@@ -99,9 +101,16 @@ tools list is left out:
   taken from the most frequent sender on their sent Gmail threads (one
   `gmail_search` for `in:sent`, once a day) and a chat of that name is left out.
   Without Gmail nothing is left out as the reader's own chat.
-- **Trello**: only cards a session carries (`sessionId`) or that sit in an
-  in-progress column (a name containing progress, doing, pågår, working, in
-  work, wip or active, any case). At most 15.
+- **WhatsApp** also leaves out a chat with no name: an empty name, one made
+  only of digits, plus signs and spaces, or one equal to the chat's id.
+- **Trello**: a card in a done column (a name that is done, klar, klart, färdig
+  or avslutad, any case) is never shown, whether a session carries it or not.
+  Kept, in this order: cards in an in-progress column (a name containing
+  progress, doing, pågår, working, in work, wip or active, any case; those a
+  session carries first), then cards in "Denna Vecka" (or "This week"), then
+  cards in any other column that a session carries (`sessionId`), such as
+  "Avvaktar" or "Denna Månad". Cards with no session in those other columns
+  stay out. At most 15.
 - **Outlook, Instagram, LinkedIn, Messenger**: as listed, kept when they match
   a session or had a message in the last 3 days. At most 20 conversations in
   all, Gmail first, then the best session matches.

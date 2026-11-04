@@ -22,9 +22,10 @@ export const MAX_LINKED = 8;
 const TITLE_CHARS = 28;
 
 /**
- * THE one place that turns a WhatsApp chat id into a (web) link. A person's
- * chat is `https://wa.me/<number>` and a group, which has no deep link, is
- * WhatsApp Web. Without the prifly feature "open-url-apps", `openUrl` accepts
+ * THE one place that turns a WhatsApp chat id into a (web) link. Only a real
+ * phone id (`<digits>@s.whatsapp.net` or `@c.us`) gets `https://wa.me/<number>`;
+ * every other id (`@lid`, WhatsApp's internal linked id, which is not a phone
+ * number, or a group's `@g.us`) is WhatsApp Web. Without the prifly feature "open-url-apps", `openUrl` accepts
  * only http and https, so this is what opens; with it, `appLinkOf` turns the
  * same link into the app's.
  */
@@ -40,8 +41,9 @@ export function linkOf(item: Item): string | undefined {
 
 /**
  * The desktop-app link for `item`, or undefined when it has none (Gmail,
- * Outlook and the rest stay web links). WhatsApp person: `whatsapp://send?phone=<digits>`;
- * WhatsApp group: `whatsapp://` (the app itself). Trello card: Atlassian's
+ * Outlook and the rest stay web links). WhatsApp chat with a real phone id:
+ * `whatsapp://send?phone=<digits>`; any other WhatsApp chat (`@lid`, `@g.us`):
+ * `whatsapp://` (the app itself). Trello card: Atlassian's
  * `trello://x-callback-url/showCard?shortlink=<shortlink>`, the shortlink
  * being taken from the card url `https://trello.com/c/<shortlink>/...`.
  */
