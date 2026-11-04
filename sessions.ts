@@ -2,11 +2,7 @@
 
 import type { FactSession, Item, Status } from "./types";
 
-/**
- * At most this many sessions are drawn: the live ones first, then the ended
- * ones in the order `api.sessions()` gives them (a session carries no time to
- * sort by).
- */
+/** At most this many sessions are drawn, in the order `api.sessions()` gives them. */
 export const MAX_SESSIONS = 40;
 
 /** The folder prifly's summariser runs its folds in (`foldHome` in prifly's session-summary.ts). */
@@ -15,29 +11,14 @@ function isSummariserFolder(cwd: string): boolean {
 }
 
 /**
- * A throwaway folder: a Claude scratchpad (`scratchpad` under a `claude` temp
- * folder), `/tmp` or anything under it, or Windows' `AppData\Local\Temp`.
- */
-function isThrowawayFolder(cwd: string): boolean {
-  const path = cwd.replace(/\\/g, "/").toLowerCase();
-  if (/^\/tmp(?:\/|$)/.test(path)) return true;
-  if (/\/appdata\/local\/temp(?:\/|$)/.test(path)) return true;
-  return /\/claude[^/]*\/(?:.*\/)?scratchpad(?:\/|$)/.test(path);
-}
-
-/**
- * A leftover nobody looks at: an archived session, an ended untitled one, an
- * agent's report, a summariser fold, or an ended one in a throwaway folder
- * (one-shot probes). A live untitled session, or a live one in a throwaway
- * folder, stays: it is new, or someone may be watching it.
+ * A leftover nobody looks at: an ended session (whatever its folder or title:
+ * probes, untitled sessions, reports and folds end up there), an archived one,
+ * an agent's report or a summariser fold. Every other state stays, a snoozed
+ * session too.
  */
 export function isLeftover(session: FactSession): boolean {
-  if (session.archived === true) return true;
-  if (session.state === "ended" && isThrowawayFolder(session.cwd)) return true;
-  const title = session.title.trim();
-  const untitled = title === "" || title.toLowerCase() === "untitled";
-  if (untitled && session.state === "ended") return true;
-  if (title.startsWith("# The agent's report")) return true;
+  if (session.state === "ended" || session.archived === true) return true;
+  if (session.title.trim().startsWith("# The agent's report")) return true;
   return isSummariserFolder(session.cwd);
 }
 
@@ -110,10 +91,10 @@ function itemOf(session: FactSession, now: number): Item {
   return item;
 }
 
-/** The sessions worth a circle, as items: leftovers dropped, live ones first, at most `MAX_SESSIONS`. */
+/** The sessions worth a circle, as items: leftovers dropped, at most `MAX_SESSIONS`. */
 export function sessionItems(sessions: readonly FactSession[], now: number): Item[] {
-  const kept = sessions.filter((session) => !isLeftover(session));
-  const live = kept.filter((session) => session.state !== "ended");
-  const ended = kept.filter((session) => session.state === "ended");
-  return [...live, ...ended].slice(0, MAX_SESSIONS).map((session) => itemOf(session, now));
+  return sessions
+    .filter((session) => !isLeftover(session))
+    .slice(0, MAX_SESSIONS)
+    .map((session) => itemOf(session, now));
 }

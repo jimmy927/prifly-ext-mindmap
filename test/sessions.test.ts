@@ -25,11 +25,37 @@ test("live sessions in a throwaway folder stay", () => {
   expect(sessionItems(sessions, NOW).length).toBe(THROWAWAY.length);
 });
 
-test("an ended session in a normal repo stays", () => {
-  const kept = session({ title: "Refund bug", cwd: "/home/ada/src/shop", state: "ended" });
-  const others = ["/home/ada/src/tmp-tools", "/home/ada/src/claude-tools/notes"].map((cwd) =>
-    session({ title: "Notes", cwd, state: "ended" }),
-  );
-  const ids = sessionItems([kept, ...others], NOW).map((item) => item.id);
-  expect(ids.sort()).toEqual([kept, ...others].map((s) => s.id).sort());
+test("an ended session in a normal repo is left out", () => {
+  const cwds = ["/home/jimmy/src/odi.worktrees/odi-159", "/home/ada/src/shop"];
+  const sessions = cwds.map((cwd) => session({ title: "Refund bug", cwd, state: "ended" }));
+  expect(sessionItems(sessions, NOW)).toEqual([]);
+});
+
+test("ended probe-titled and untitled sessions are left out", () => {
+  const cwd = "/home/jimmy/src/odi.worktrees/odi-159";
+  const sessions = [
+    "Run exactly this one Bash command, verbatim, once",
+    "untitled",
+    "",
+  ].map((title) => session({ title, cwd, state: "ended" }));
+  expect(sessionItems(sessions, NOW)).toEqual([]);
+});
+
+test("idle, waiting, working and snoozed sessions are kept", () => {
+  const cwd = "/home/ada/src/shop";
+  const snoozedUntil = new Date(NOW + 3_600_000).toISOString();
+  const kept = [
+    session({ title: "A", cwd, state: "idle" }),
+    session({ title: "B", cwd, state: "waiting" }),
+    session({ title: "C", cwd, state: "working" }),
+    session({ title: "D", cwd, state: "idle", snoozedUntil }),
+  ];
+  const ended = session({ title: "E", cwd, state: "ended" });
+  const ids = sessionItems([ended, ...kept], NOW).map((item) => item.id);
+  expect(ids).toEqual(kept.map((s) => s.id));
+});
+
+test("an archived session is still left out", () => {
+  const archived = session({ title: "Old", cwd: "/home/ada/src/shop", state: "idle", archived: true });
+  expect(sessionItems([archived], NOW)).toEqual([]);
 });

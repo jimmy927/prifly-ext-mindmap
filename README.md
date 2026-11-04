@@ -48,9 +48,11 @@ sessions; up to 20 are drawn - first the Gmail threads (every starred thread,
 and every unread thread in the inbox, whatever their age: one `gmail_search`
 call, max 30), then those that match a session best first (recency only breaks
 ties), then any with a message in the last 3 days - and up to 15
-cards, those with a session first, then the best matches. Ended leftovers
-(untitled sessions, agent reports, prifly's summariser folds) are left out, and
-at most 40 sessions are drawn.
+cards, those with a session first, then the best matches. Ended sessions
+(state "ended", whatever their folder or title: probes, untitled sessions,
+reports, folds) are left out, as are archived ones, agent reports and prifly's
+summariser folds. Every other state stays, snoozed sessions included, and at
+most 40 sessions are drawn.
 
 Conversations and cards need prifly's `read-tools` feature, and the solid links
 and brief summaries its `session-facts` feature. On a prifly without them the map
