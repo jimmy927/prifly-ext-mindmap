@@ -1,11 +1,14 @@
 // The right-click menu on a circle, and what a click on a circle does. The
 // extension says where a circle can be opened (`node.menu`); a session opens
 // inside prifly, anything else goes to `api/open`, which opens the item's own
-// link in the reader's browser. The page never holds or sends a URL.
+// link in the reader's browser. The page never holds or sends a URL. With the
+// reader's areas, "Move to theme…" lists them and their sub-topics; a choice
+// goes to `api/move`, and "Reset placement" gives the circle back to the model.
 
 const MARGIN = 8;
 const NOTE_MS = 4000;
 const BROWSER_FAILED = "prifly could not open the browser";
+const MOVE_FAILED = "The map could not move it";
 
 let menu = null;
 let noteTimer = null;
@@ -75,8 +78,95 @@ function place(el, x, y) {
   el.style.top = `${top}px`;
 }
 
-/** Shows the menu for `node` at the pointer (x, y in window pixels). */
-export function openMenu(node, x, y) {
+/**
+ * Posts a move to `api/move` (an area and sub-topic, or `reset`) and draws the
+ * map it answers with `show`; a refusal is said in a note.
+ */
+async function move(node, body, show) {
+  try {
+    const response = await fetch("api/move", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: node.id, ...body }),
+    });
+    const answer = await response.json();
+    if (!response.ok) throw new Error(answer?.error ?? `HTTP ${response.status}`);
+    show?.(answer);
+  } catch (error) {
+    note(error instanceof Error && error.message ? error.message : MOVE_FAILED);
+  }
+}
+
+function divider() {
+  const hr = document.createElement("div");
+  hr.className = "divider";
+  hr.setAttribute("role", "separator");
+  return hr;
+}
+
+/** One line of the "Move to theme…" list, ticked where the circle is now. */
+function spot(text, current, cls) {
+  const button = line(text);
+  button.classList.add(cls);
+  button.setAttribute("role", "menuitemradio");
+  button.setAttribute("aria-checked", current ? "true" : "false");
+  return button;
+}
+
+/** The menu's lines turned into the list of areas and their sub-topics. */
+function showMoveList(el, node, context, x, y) {
+  el.replaceChildren();
+  el.classList.add("move");
+  const head = document.createElement("p");
+  head.className = "head";
+  head.textContent = "Move to theme";
+  el.append(head);
+  for (const area of context.areas) {
+    const here = node.theme === area.id;
+    const top = spot(area.name, here && !node.sub, "area");
+    top.addEventListener("click", () => {
+      closeMenu();
+      void move(node, { area: area.id, sub: "" }, context.show);
+    });
+    el.append(top);
+    for (const sub of area.subs) {
+      const button = spot(sub, here && node.sub === sub, "sub");
+      button.addEventListener("click", () => {
+        closeMenu();
+        void move(node, { area: area.id, sub }, context.show);
+      });
+      el.append(button);
+    }
+  }
+  place(el, x, y);
+  (el.querySelector('[aria-checked="true"]') ?? el.querySelector(".item"))?.focus({
+    preventScroll: true,
+  });
+}
+
+/** "Move to theme…" and, for a circle the reader placed, "Reset placement". */
+function moveLines(el, node, context, x, y) {
+  if (!Array.isArray(context.areas) || context.areas.length === 0) return;
+  el.append(divider());
+  const open = line("Move to theme…");
+  open.setAttribute("aria-haspopup", "menu");
+  open.addEventListener("click", () => showMoveList(el, node, context, x, y));
+  el.append(open);
+  if (node.manual !== true) return;
+  const reset = line("Reset placement");
+  reset.addEventListener("click", () => {
+    closeMenu();
+    void move(node, { reset: true }, context.show);
+  });
+  el.append(reset);
+}
+
+/**
+ * Shows the menu for `node` at the pointer (x, y in window pixels). `context`
+ * has the map's `areas` (for "Move to theme…") and `show`, which draws the
+ * map a move answers.
+ */
+export function openMenu(node, x, y, context = {}) {
   closeMenu();
   const entries = menuOf(node);
   const el = document.createElement("div");
@@ -96,6 +186,7 @@ export function openMenu(node, x, y) {
     });
     el.append(button);
   }
+  moveLines(el, node, context, x, y);
   document.body.append(el);
   menu = el;
   place(el, x, y);

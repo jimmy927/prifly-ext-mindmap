@@ -1,6 +1,6 @@
 /** A fake `api` and invented items for the tests: no real prifly data, no network. */
 
-import type { ExtensionApi, ExtensionStateApi } from "@prifly/extension-api";
+import type { ExtensionApi, ExtensionStateApi, SettingValue } from "@prifly/extension-api";
 import type { Ask, LlmFailCode, LlmRequest } from "../llm";
 import type { FactSession, Item, ReadResult } from "../types";
 
@@ -35,6 +35,15 @@ export type FakeOptions = {
   read?: (name: string, args: Record<string, unknown>) => Promise<string>;
   /** The browser prifly opens links in (feature "open-url"); absent for a prifly without it. */
   open?: (url: string) => Promise<boolean>;
+  /** The extension's settings (feature "settings"); absent for a prifly without them. */
+  settings?: Record<string, SettingValue>;
+};
+
+/** What the fake api adds for the tests: its log, its reads, and the reader editing a setting. */
+export type FakeApi = ExtensionApi & {
+  logs: string[];
+  reads: string[];
+  changeSettings: (values: Record<string, SettingValue>) => void;
 };
 
 /** What the grouping prompt carries, as the tests read it. */
@@ -100,11 +109,10 @@ export function refusing(code: LlmFailCode, reason: string): Ask {
   return async () => ({ ok: false, code, reason });
 }
 
-export function fakeApi(
-  options: FakeOptions = {},
-): ExtensionApi & { logs: string[]; reads: string[] } {
+export function fakeApi(options: FakeOptions = {}): FakeApi {
   const logs: string[] = [];
   const reads: string[] = [];
+  let onSettings: ((values: Record<string, SettingValue>) => void) | null = null;
   const tools = {
     register: () => undefined,
     // As prifly answers: { ok, text } or { ok: false, error }, never a throw.
@@ -127,8 +135,19 @@ export function fakeApi(
           "state",
           ...(options.ask ? ["llm-ask"] : []),
           ...(options.open ? ["open-url"] : []),
+          ...(options.settings ? ["settings"] : []),
         ]
       );
+    },
+    get settings() {
+      return options.settings;
+    },
+    onSettings: (handler: (values: Record<string, SettingValue>) => void) => {
+      onSettings = handler;
+    },
+    changeSettings: (values: Record<string, SettingValue>) => {
+      options.settings = values;
+      onSettings?.(values);
     },
     openUrl: options.open,
     llm: { ask: (request: LlmRequest) => (options.ask ?? refusing("no-model", "none"))(request) },
@@ -139,7 +158,7 @@ export function fakeApi(
       logs.push(event);
     },
   };
-  return api as unknown as ExtensionApi & { logs: string[]; reads: string[] };
+  return api as unknown as FakeApi;
 }
 
 let counter = 0;

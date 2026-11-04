@@ -115,6 +115,14 @@ export type Sorting = {
   /** Item id → two short summary lines. */
   lines: Record<string, string[]>;
   related: { a: string; b: string; label: string }[];
+  /**
+   * With the reader's areas: the themes are the areas, in this order round the
+   * ellipse, each shown even with no item ("other" only with one); each item's
+   * sub-topic inside its area; and the items the reader placed by hand.
+   */
+  areaOrder?: string[];
+  subOf?: Record<string, string>;
+  manual?: string[];
 };
 
 export type LinkKind = "started" | "waits on" | "ticket" | "related";

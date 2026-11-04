@@ -4,11 +4,14 @@ A live, self-updating radial mind map of your prifly sessions, the conversations
 they are about and their Trello cards. Click **Mind map** in prifly's status bar
 and it opens over nearly the whole window.
 
-- **All sessions** sits in the middle. Around it, on an ellipse, are 6 to 9
-  **themes**: what the work is about, whatever service it came from - a session,
-  the WhatsApp chat and the mail about the same person or product sit in one
-  theme. Each session, conversation and card hangs off its theme, with its
-  title in bold and two short summary lines.
+- **All sessions** sits in the middle. Around it, on an ellipse, are the
+  **themes**: your own **areas** (Settings, below), in your order, or - with no
+  areas set - 6 to 9 themes the model makes up. Either way a theme is what the
+  work is about, whatever service it came from: a session, the WhatsApp chat and
+  the mail about the same person or product sit together. Each session,
+  conversation and card hangs off its theme, with its title in bold and two
+  short summary lines; inside an area, two or more items on the same
+  **sub-topic** hang off a small hub of their own.
 - A dot on each session's rim says how it stands: green running, amber waiting
   on you, red error. (Idle and snoozed sessions are not drawn at all.)
 - **Solid arrows** are links prifly knows: a session _started_ another, a
@@ -69,6 +72,39 @@ scheme), the web link is opened at once instead. Gmail, Outlook and the other
 services stay web links.
 
 The map never sends a message, marks anything read or changes the mailbox.
+
+## Your areas
+
+Settings → Extensions → Mind map has one setting, **Areas**: the map's
+top-level themes, in your order. Each area is a name, optionally followed by
+":" and a few words of hint for the model. prifly's settings field is a single
+line, so areas are separated by ";" (a newline works too). The default:
+
+```text
+ODI / Artemis product; Partners & integrations: Teamtailor, Jobylon, Intelliplan, Eltel; prifly: prifly and its extensions; Proxy & datamining; Finance: Fortnox, Pleo, bokföring, invoices; Family & friends
+```
+
+With areas set, the model only places (`placing.ts`): every item goes under
+exactly one area, by what it is about and never by the service it came from,
+with an optional sub-topic of 1-3 words inside it. It may not invent a
+top-level theme; an answer that names something that is not one of your areas
+puts the item under **Other**, which is on the map only while it holds
+something. Every area keeps its place on the ellipse and its colour (the
+colour of its place in the list; Other is grey), even with nothing in it. An
+edit of the setting regroups the map at once (`api.onSettings`). An empty
+setting, or a prifly without settings, keeps the model's own themes, as before
+there were areas.
+
+**Move to theme…** in a circle's right-click menu lists the areas with their
+sub-topics now, a tick on where the circle is. A choice moves it at once: the
+page posts `api/move` with the item id, the area and the sub-topic, the
+extension keeps the move in `api.state` (`placements`, keyed by item id) and
+answers the new map. The model never overrides a move, across regroups and
+restarts, and the latest 30 moves go along in the placing call as examples
+("the reader put "Teamtailor webhook" under Partners & integrations /
+Teamtailor"), so similar new items follow. A moved circle's menu also has
+**Reset placement**, which gives it back to the model. A move to an area you
+later remove is kept but not used. Without areas the menu has neither line.
 
 ## How it stays current
 
@@ -140,7 +176,11 @@ code, and they only help the model:
    - **no summary lines**. The answer is validated with zod (the schema comes
      from the same zod definition), kept in `api.state` and used for exactly the
      items it was made for; a restart does not ask again. Nothing is grouped
-     without the model. The map is drawn as soon as this call answers.
+     without the model. The map is drawn as soon as this call answers. With
+     areas set, the same call places instead (see "Your areas"): it is sent the
+     areas and their hints, the previous sub-topics with their members and your
+     moves as examples, and answers each item's area and sub-topic; the areas
+     are part of what it was made for, so a changed setting asks again.
 3. **The summary-line calls** (`liner.ts`, `lines.ts`). The two short lines under
    each circle are asked for apart, in batches of at most 20 items (a batch
    names its items `i1`...`i20` and gets two lines of at most 22 characters
@@ -177,6 +217,12 @@ unusable). A summary line is bad when it equals, starts, or sits inside its
 item's title (case and punctuation ignored), or is generic ("Person contact",
 "Message from"): it is left out, so the circle shows none rather than a repeat
 of its title.
+
+With areas, the naming checks are on the sub-topics: one that is a catch-all, a
+service's name (WhatsApp, Gmail, Trello...) or only its area's name sends the
+call back once with the reasons, and if it comes back again it is dropped (the
+item stays in its area, with no sub-topic). An item the answer leaves out is a
+reason to ask again too, and goes under Other if it stays out.
 
 ## The model
 
@@ -219,7 +265,10 @@ Everything is laid out in the extension (`layout.ts`, `curves.ts`, `view.ts`)
 with `d3-force`, seeded from the last positions so circles do not jump; the page
 (`panel/`) only draws SVG and eases each circle and label to its new place. Themes
 are fixed on an ellipse (rx 500, ry 270) round the centre of a 1680x1060 frame,
-ordered so linked themes sit next to each other. Link labels go at the first
+ordered so linked themes sit next to each other (your areas keep your order). A
+sub-topic hub is a small circle in its area's branch with its members a ring
+further out; it takes part in the same collision and separation as every other
+circle, so it never overlaps one. Link labels go at the first
 point of their curve no circle and no other label covers, bending the curve
 further, and shortening the label, until one is free.
 

@@ -8,6 +8,15 @@
     "tiers": ["fast"],
     "why": "Groups your sessions, chats, mails and cards into topics and names them."
   },
+  "settings": [
+    {
+      "id": "areas",
+      "label": "Areas",
+      "description": "The map's themes, in your order. Areas are separated by \";\" (or one per line). Each one is a name, optionally followed by \":\" and a few words of hint, e.g. \"Partners & integrations: Teamtailor, Jobylon\". Leave this empty to let the model make up the themes.",
+      "type": "string",
+      "default": "ODI / Artemis product; Partners & integrations: Teamtailor, Jobylon, Intelliplan, Eltel; prifly: prifly and its extensions; Proxy & datamining; Finance: Fortnox, Pleo, bokföring, invoices; Family & friends"
+    }
+  ],
   "reads": [
     "whatsapp_chats",
     "gmail_search",

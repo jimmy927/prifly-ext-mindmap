@@ -221,6 +221,42 @@ body {
   background: color-mix(in srgb, var(--fg) 10%, var(--bg));
   outline: none;
 }
+.menu .divider {
+  height: 1px;
+  margin: 4px 6px;
+  background: var(--border);
+}
+.menu .head {
+  margin: 0;
+  padding: 6px 10px 4px;
+  color: var(--muted-fg);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+/* The "Move to theme…" list: areas, their sub-topics indented under them, a tick where the circle is. */
+.menu.move .item {
+  padding-left: 26px;
+  position: relative;
+}
+.menu.move .item.area {
+  font-weight: 600;
+}
+.menu.move .item.sub {
+  padding-left: 42px;
+  color: var(--muted-fg);
+}
+.menu.move .item[aria-checked="true"] {
+  color: var(--fg);
+}
+.menu.move .item[aria-checked="true"]::before {
+  content: "\2713";
+  position: absolute;
+  left: 9px;
+  font-weight: 600;
+}
+.menu.move .item.sub[aria-checked="true"]::before {
+  left: 25px;
+}
 .menu .item:disabled {
   color: var(--muted-fg);
   cursor: default;

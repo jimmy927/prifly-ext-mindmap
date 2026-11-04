@@ -2,8 +2,9 @@
 // circle and label from where it was to where the extension now puts it. A
 // click on a circle opens it where its first menu line says (a session in
 // prifly, anything else in the reader's browser); a right-click lists every
-// place it can be opened (menu.js). The map itself never sends or changes
-// anything.
+// place it can be opened (menu.js) and, with the reader's areas, "Move to
+// theme…", which posts the move to `api/move` and draws the map it answers.
+// Nothing else on the map sends or changes anything.
 
 import { drawMap, esc } from "./draw.js";
 import { startEvery } from "./every.js";
@@ -31,13 +32,19 @@ function linkKey(link) {
 /** `to` with every position moved `t` of the way from where `from` had it. */
 function between(from, to, t) {
   if (from === null) return to;
-  const before = new Map([...from.themes, ...from.nodes].map((c) => [c.id, c]));
+  const before = new Map(
+    [...from.themes, ...(from.subs ?? []), ...from.nodes].map((c) => [c.id, c]),
+  );
   const themeAt = new Map(to.themes.map((th) => [th.id, th]));
   const ease = (c, start) =>
     start ? { ...c, x: lerp(start.x, c.x, t), y: lerp(start.y, c.y, t) } : c;
   const themes = to.themes.map((th) => ease(th, before.get(th.id)));
-  // A new circle grows out of its theme.
-  const nodes = to.nodes.map((m) => ease(m, before.get(m.id) ?? themeAt.get(m.theme)));
+  // A new circle grows out of its theme (a member of a sub-topic, out of its hub).
+  const subs = (to.subs ?? []).map((s) => ease(s, before.get(s.id) ?? themeAt.get(s.theme)));
+  const subAt = new Map(subs.map((s) => [s.id, s]));
+  const nodes = to.nodes.map((m) =>
+    ease(m, before.get(m.id) ?? subAt.get(m.hub) ?? themeAt.get(m.theme)),
+  );
   const labels = new Map(from.links.map((l) => [linkKey(l), l.label]));
   const links = to.links.map((l) => {
     const start = labels.get(linkKey(l));
@@ -48,7 +55,7 @@ function between(from, to, t) {
         }
       : l;
   });
-  return { ...to, themes, nodes, links };
+  return { ...to, themes, subs, nodes, links };
 }
 
 function paint(view) {
@@ -217,7 +224,7 @@ $("map").addEventListener("click", (event) => {
 $("map").addEventListener("contextmenu", (event) => {
   event.preventDefault();
   const node = nodeAt(event);
-  if (node) openMenu(node, event.clientX, event.clientY);
+  if (node) openMenu(node, event.clientX, event.clientY, { areas: target?.areas, show });
   else closeMenu();
 });
 

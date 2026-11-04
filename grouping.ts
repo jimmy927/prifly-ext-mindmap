@@ -8,10 +8,16 @@
  * is kept in `api.state`, so a restart does not ask again. Nothing is grouped
  * without the model: no feature, a refusal, a failed call or a bad answer
  * leaves `error` saying why.
+ *
+ * With the reader's areas set (`areas.ts`), the call only places: each item
+ * under one of the areas (or "Other"), with a sub-topic, and the reader's own
+ * placements go along as examples (`placing.ts`). The areas are part of the
+ * fingerprint, so a changed setting is a new grouping.
  */
 
 import { createHash } from "node:crypto";
 import type { ExtensionStateApi } from "@prifly/extension-api";
+import { type Area, areasKey, OTHER } from "./areas";
 import { AskLimits } from "./limits";
 import {
   type Ask,
@@ -22,6 +28,13 @@ import {
   refusedFailure,
   unsupportedFailure,
 } from "./llm";
+import {
+  type Example,
+  type Placing,
+  type PreviousSub,
+  parsePlacing,
+  placingRequest,
+} from "./placing";
 import { nameProblem, type Review, reasons, review } from "./rules";
 import {
   type Grouping,
@@ -48,6 +61,9 @@ export type Answered = {
   related: Pair[];
   model: string;
   backend: LlmBackend;
+  /** With areas: the areas it was made for (`areasKey`), and each item's sub-topic by id. */
+  areas?: string;
+  subOf?: Record<string, string>;
 };
 
 /** The answer for no items at all: nothing to ask. */
@@ -63,13 +79,16 @@ export const NOTHING: Answered = {
 /**
  * What changes the call: which items there are and what they are called (id,
  * title, subject), in any order. Not their status, brief, last message or
- * time: those change all the time and the grouping stands.
+ * time: those change all the time and the grouping stands. With areas, the
+ * areas too (`areasKey`).
  */
-export function fingerprintOf(items: readonly Item[]): string {
+export function fingerprintOf(items: readonly Item[], areas = ""): string {
   const told = items
     .map((item) => [item.id, item.title, item.subject ?? ""])
     .sort((a, b) => ((a[0] ?? "") < (b[0] ?? "") ? -1 : 1));
-  return createHash("sha1").update(JSON.stringify(told)).digest("hex");
+  const hash = createHash("sha1").update(JSON.stringify(told));
+  if (areas !== "") hash.update(areas);
+  return hash.digest("hex");
 }
 
 export function jaccard(a: readonly string[], b: readonly string[]): number {
@@ -87,6 +106,10 @@ export type GrouperDeps = {
   /** Shared with the summary lines: one ask in flight, and the hour's count. */
   limits?: AskLimits;
   log?: (event: string, fields: Record<string, string | number | boolean | null>) => void;
+  /** The reader's areas now; none (or absent): the model invents the themes. */
+  areas?: () => readonly Area[];
+  /** The reader's own placements, as examples for the model. */
+  examples?: () => Example[];
 };
 
 /** One reading of an answer: the grouping when its shape is right, the review of it, and every reason to ask again. */
@@ -112,10 +135,23 @@ export class Grouper {
       this.answered = saved;
   }
 
-  /** The answer for exactly these items, or null while the model has not given one. */
+  private areas(): readonly Area[] {
+    return this.deps.areas?.() ?? [];
+  }
+
+  private fingerprint(items: readonly Item[]): string {
+    return fingerprintOf(items, areasKey(this.areas()));
+  }
+
+  /** The answer for exactly these items (and areas), or null while the model has not given one. */
   answerFor(items: readonly Item[]): Answered | null {
     if (items.length === 0) return NOTHING;
-    return this.answered?.fingerprint === fingerprintOf(items) ? this.answered : null;
+    return this.answered?.fingerprint === this.fingerprint(items) ? this.answered : null;
+  }
+
+  /** The areas changed: the next `update` asks at once, not a minute after the last call. */
+  regroup(): void {
+    this.askedAt = Number.NEGATIVE_INFINITY;
   }
 
   /**
@@ -133,7 +169,8 @@ export class Grouper {
   /** The topics of the last answer, with their members: a hint, so topics stay stable. */
   private previous(): PreviousTopic[] {
     const last = this.answered;
-    if (last === null) return [];
+    // The reader's areas are no invented topics to keep.
+    if (last === null || last.areas !== undefined) return [];
     return last.topics.map((topic) => ({
       ...topic,
       members: Object.entries(last.topicOf).flatMap(([id, t]) => (t === topic.id ? [id] : [])),
@@ -147,7 +184,7 @@ export class Grouper {
       items.length > 0 &&
       this.deps.ask() !== null &&
       now - this.askedAt >= MIN_GAP_MS &&
-      this.answered?.fingerprint !== fingerprintOf(items)
+      this.answered?.fingerprint !== this.fingerprint(items)
     );
   }
 
@@ -159,8 +196,12 @@ export class Grouper {
     this.clock = now;
     const started = Date.now();
     try {
+      const areas = this.areas();
       const hints: Hints = { shared: picked.shared, previous: this.previous() };
-      const done = await this.converse(ask, picked.items, hints);
+      const done =
+        areas.length > 0
+          ? await this.place(ask, picked, areas)
+          : await this.converse(ask, picked.items, hints);
       this.deps.log?.("grouped", {
         items: picked.items.length,
         ok: done,
@@ -230,6 +271,67 @@ export class Grouper {
     return one.grouping !== null
       ? this.accept(first, one, items)
       : this.fail(badAnswerFailure(two.problems[0] ?? "it was not a grouping"));
+  }
+
+  /** The sub-topics of the last placing, with their members: a hint, so sub-topics stay stable. */
+  private previousSubs(): PreviousSub[] {
+    const last = this.answered;
+    if (last?.subOf === undefined) return [];
+    const names = new Map(last.topics.map((topic) => [topic.id, topic.name]));
+    const subs = new Map<string, PreviousSub>();
+    for (const [id, sub] of Object.entries(last.subOf)) {
+      const area = names.get(last.topicOf[id] ?? "") ?? OTHER.name;
+      const entry = subs.get(`${area}|${sub}`) ?? { area, sub, members: [] };
+      entry.members.push(id);
+      subs.set(`${area}|${sub}`, entry);
+    }
+    return [...subs.values()];
+  }
+
+  /** The placing call under the reader's areas, and one more call when the answer left something to fix. */
+  private async place(ask: Ask, picked: Picked, areas: readonly Area[]): Promise<boolean> {
+    const { items } = picked;
+    const hints = {
+      shared: picked.shared,
+      previous: this.previousSubs(),
+      examples: this.deps.examples?.() ?? [],
+    };
+    const request = placingRequest(items, areas, hints);
+    const first = await this.callAsk(ask, request);
+    if (!first.ok) return this.fail(refusedFailure(first.code, first.reason));
+    const one = parsePlacing(first.text, items, areas);
+    if (one.placing !== null && one.problems.length === 0)
+      return this.acceptPlacing(first, one.placing, items, areas);
+    const second = await this.callAsk(ask, retryRequest(request, first.text, one.problems));
+    const two = second.ok ? parsePlacing(second.text, items, areas) : null;
+    if (second.ok && two?.placing) return this.acceptPlacing(second, two.placing, items, areas);
+    // The first answer stands if it could be read; else why the second one could not.
+    if (one.placing !== null) return this.acceptPlacing(first, one.placing, items, areas);
+    if (!second.ok) return this.fail(refusedFailure(second.code, second.reason));
+    return this.fail(badAnswerFailure(two?.problems[0] ?? "it was not a placing"));
+  }
+
+  private acceptPlacing(
+    answer: LlmAnswer & { ok: true },
+    placing: Placing,
+    items: readonly Item[],
+    areas: readonly Area[],
+  ): true {
+    const used = new Set(placing.areaOf.values());
+    const shown = [...areas, ...(used.has(OTHER.id) ? [OTHER] : [])];
+    this.answered = {
+      fingerprint: fingerprintOf(items, areasKey(areas)),
+      topics: shown.map((area) => ({ id: area.id, name: area.name, sub: "" })),
+      topicOf: Object.fromEntries(placing.areaOf),
+      related: placing.related,
+      model: answer.model,
+      backend: answer.backend,
+      areas: areasKey(areas),
+      subOf: Object.fromEntries(placing.subOf),
+    };
+    this.failure = null;
+    void this.deps.state?.set(STATE_NAME, this.answered).catch(() => undefined);
+    return true;
   }
 
   private fail(failure: Failure): false {

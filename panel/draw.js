@@ -115,7 +115,8 @@ function textBlock(x, y, rows) {
 
 function themeShape(theme) {
   const rows = [
-    ...wrap(theme.name, 12, 2).map((text) => ({
+    // A theme with no sub line (one of the reader's areas) has room for a third line of name.
+    ...wrap(theme.name, 12, theme.sub ? 2 : 3).map((text) => ({
       text,
       cls: "",
       size: 13,
@@ -130,6 +131,12 @@ function themeShape(theme) {
     })),
   ];
   return `<g class="theme"><circle cx="${n(theme.x)}" cy="${n(theme.y)}" r="${theme.r}" fill="${theme.color}"/>${textBlock(theme.x, theme.y, rows)}</g>`;
+}
+
+/** A sub-topic's hub inside an area's branch: a small tinted circle with its name. */
+function subShape(sub, base) {
+  const rows = wrap(sub.name, 11, 2).map((text) => ({ text, cls: "title", size: 9.5 }));
+  return `<g class="sub" data-id="${esc(sub.id)}"><circle cx="${n(sub.x)}" cy="${n(sub.y)}" r="${sub.r}" fill="${tint(sub.color, 0.3, base)}" stroke="${sub.color}" stroke-width="1.5"/>${textBlock(sub.x, sub.y, rows)}<title>${esc(sub.name)}</title></g>`;
 }
 
 function nodeShape(node, base) {
@@ -173,26 +180,34 @@ function linkShape(link, circles) {
 /** The whole map at the positions in `view` (already eased by the caller). */
 export function drawMap(view, dark) {
   const base = dark ? "#16191e" : "#ffffff";
+  const subs = view.subs ?? [];
   const circles = new Map([
     ["root", view.root],
     ...view.themes.map((t) => [t.id, t]),
+    ...subs.map((s) => [s.id, s]),
     ...view.nodes.map((m) => [m.id, m]),
   ]);
   const themeById = new Map(view.themes.map((t) => [t.id, t]));
+  const subById = new Map(subs.map((s) => [s.id, s]));
   const trunks = view.themes
     .map(
       (t) =>
         `<path d="${curve(view.root, t, t.bend)}" fill="none" stroke="${t.color}" stroke-width="10" stroke-linecap="round" opacity="0.55"/>`,
     )
     .join("");
-  const branches = view.nodes
-    .map((m) => {
-      const t = themeById.get(m.theme);
-      return t
-        ? `<path d="${curve(t, m, m.bend)}" fill="none" stroke="${t.color}" stroke-width="3.5" stroke-linecap="round" opacity="0.55"/>`
-        : "";
-    })
-    .join("");
+  const branch = (from, to, width) =>
+    `<path d="${curve(from, to, to.bend)}" fill="none" stroke="${from.color}" stroke-width="${width}" stroke-linecap="round" opacity="0.55"/>`;
+  // Area to sub-topic hub, then area or hub to each member.
+  const branches = [
+    ...subs.map((s) => {
+      const t = themeById.get(s.theme);
+      return t ? branch(t, s, 3.5) : "";
+    }),
+    ...view.nodes.map((m) => {
+      const from = (m.hub && subById.get(m.hub)) || themeById.get(m.theme);
+      return from ? branch(from, m, m.hub ? 2.5 : 3.5) : "";
+    }),
+  ].join("");
   const links = view.links.map((link) => linkShape(link, circles)).join("");
   const root = `<g><circle cx="${n(view.root.x)}" cy="${n(view.root.y)}" r="${view.root.r}" fill="${ROOT_FILL}"/>${textBlock(view.root.x, view.root.y, [{ text: view.root.label, cls: "", size: 14, bold: true, fill: "#ffffff" }])}</g>`;
   const labels = view.links
@@ -202,5 +217,5 @@ export function drawMap(view, dark) {
     )
     .join("");
   const defs = `<defs><marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="var(--link)"/></marker></defs>`;
-  return `${defs}${trunks}${branches}${links}${root}${view.themes.map(themeShape).join("")}${view.nodes.map((m) => nodeShape(m, base)).join("")}${labels}`;
+  return `${defs}${trunks}${branches}${links}${root}${view.themes.map(themeShape).join("")}${subs.map((s) => subShape(s, base)).join("")}${view.nodes.map((m) => nodeShape(m, base)).join("")}${labels}`;
 }

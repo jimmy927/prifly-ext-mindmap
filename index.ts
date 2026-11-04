@@ -4,6 +4,8 @@
  * ("Mind map" in the status bar). The page asks `api/map` while it is
  * visible; everything is worked out here and the page only draws it. A click
  * on a link goes to `api/open`, which opens it in the reader's browser.
+ * "Move to theme…" in a circle's menu goes to `api/move`, which keeps where
+ * the reader put it.
  */
 
 import type { ExtensionApi, PanelRequest } from "@prifly/extension-api";
@@ -26,6 +28,7 @@ export function panel(_panelId: string, request: PanelRequest): unknown {
   const current = map;
   if (current === null) throw new Error("Mind map is not running.");
   if (request.path === "open") return current.open(request.body);
+  if (request.path === "move") return current.move(request.body, Date.now());
   if (request.path !== "map") throw new Error(`No such request: ${request.path}`);
   return current.view(Date.now());
 }

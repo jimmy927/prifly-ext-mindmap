@@ -22,6 +22,11 @@ export const ROOT_R = 66;
 export const THEME_R = 54;
 export const MEMBER_R = 52;
 export const SMALL_R = 38;
+/** A sub-topic's hub: a small circle between an area and the members it gathers. */
+export const HUB_R = 34;
+/** How far a hub's members sit from it, and how much further out than the hub they start. */
+const HUB_LINK = 96;
+const HUB_REACH = 90;
 const ELLIPSE = { rx: 500, ry: 270 };
 const FAN = { distance: 150, step: 0.55 };
 const TICKS = 900;
@@ -92,14 +97,19 @@ function outward(from: Point): Point {
   return { x: dx / length, y: dy / length };
 }
 
-export type LayoutMember = { id: string; theme: string; r: number };
+/**
+ * A circle under a theme. With `parent`, it hangs from that member (a
+ * sub-topic's hub) rather than from the theme; the hub itself is a member
+ * under the theme, listed just before its children.
+ */
+export type LayoutMember = { id: string; theme: string; r: number; parent?: string };
 export type LayoutInput = {
   /** Theme ids, in their order round the ellipse. */
   themes: readonly string[];
   members: readonly LayoutMember[];
   /** Where circles (members and themes) were last time, by id. */
   previous?: ReadonlyMap<string, Point>;
-  /** Each member's theme last time: a member that changed theme, or whose theme moved, starts afresh. */
+  /** Each member's theme (its parent, for one with a parent) last time: a member that changed it, or whose theme moved, starts afresh. */
   previousTheme?: ReadonlyMap<string, string>;
 };
 export type Placed = Point & { id: string; r: number };
@@ -139,7 +149,7 @@ export function seedsOf(input: LayoutInput): Map<string, Point> {
   const seeds = new Map<string, Point>();
   for (const member of input.members) {
     const last = input.previous?.get(member.id);
-    const sameTheme = input.previousTheme?.get(member.id) === member.theme;
+    const sameTheme = input.previousTheme?.get(member.id) === (member.parent ?? member.theme);
     if (last !== undefined && sameTheme && stayed.has(member.theme)) seeds.set(member.id, last);
   }
   return seeds;
@@ -187,14 +197,17 @@ function startNodes(
     own.forEach((member, j) => {
       const angle = base + (j - (own.length - 1) / 2) * FAN.step;
       const last = seeds.get(member.id);
-      const home = { x: at.x + out.x * 120, y: at.y + out.y * 120 };
+      // A sub-topic's member sits a ring further out than its hub.
+      const reach = member.parent === undefined ? 120 : 120 + HUB_REACH;
+      const start = member.parent === undefined ? FAN.distance : FAN.distance + HUB_REACH;
+      const home = { x: at.x + out.x * reach, y: at.y + out.y * reach };
       members.push({
         id: member.id,
         r: member.r,
         home,
         fixed: false,
-        x: last?.x ?? at.x + FAN.distance * Math.cos(angle),
-        y: last?.y ?? at.y + FAN.distance * Math.sin(angle),
+        x: last?.x ?? at.x + start * Math.cos(angle),
+        y: last?.y ?? at.y + start * Math.sin(angle),
       });
     });
   }
@@ -240,11 +253,14 @@ export function layout(input: LayoutInput): LayoutResult {
   const { fixed, members } = startNodes(input, seeds);
   const nodes = [...fixed, ...members];
   const byId = new Map(nodes.map((node) => [node.id, node]));
-  const links: SimulationLinkDatum<Node>[] = input.members.flatMap((member) => {
-    const source = byId.get(member.id);
-    const target = byId.get(member.theme);
-    return source !== undefined && target !== undefined ? [{ source, target }] : [];
-  });
+  const links: (SimulationLinkDatum<Node> & { hub: boolean })[] = input.members.flatMap(
+    (member) => {
+      const source = byId.get(member.id);
+      const target = byId.get(member.parent ?? member.theme);
+      const hub = member.parent !== undefined;
+      return source !== undefined && target !== undefined ? [{ source, target, hub }] : [];
+    },
+  );
   // Seeded from the last places, the simulation starts cool so circles settle where they were;
   // with newcomers among them, warmer, so the others make room.
   const seededCount = members.filter((m) => seeds.has(m.id)).length;
@@ -252,7 +268,12 @@ export function layout(input: LayoutInput): LayoutResult {
   const simulation = forceSimulation<Node>(nodes)
     .randomSource(seeded(nodes.length * 7919 + 17))
     .alpha(heat)
-    .force("link", forceLink<Node, SimulationLinkDatum<Node>>(links).distance(132).strength(0.9))
+    .force(
+      "link",
+      forceLink<Node, SimulationLinkDatum<Node> & { hub: boolean }>(links)
+        .distance((link) => (link.hub ? HUB_LINK : 132))
+        .strength(0.9),
+    )
     .force(
       "collide",
       forceCollide<Node>((node) => node.r + GAP),

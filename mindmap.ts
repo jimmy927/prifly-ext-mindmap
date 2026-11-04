@@ -18,10 +18,16 @@
  * at most once a minute, and at most one batch of summary lines per ask; the
  * map is drawn as soon as the grouping has answered, its lines follow). A
  * closed map reads nothing.
+ *
+ * With the reader's areas (the "Areas" setting), the themes are the areas and
+ * the model only places items under them; a changed setting regroups at once.
+ * The reader's own moves ("Move to theme…", `api/move`) are kept in
+ * `api.state` and always win over the model's placing.
  */
 
 import { createHash } from "node:crypto";
 import type { ExtensionApi } from "@prifly/extension-api";
+import { type Area, areasIn, areasOf, OTHER, SETTINGS_FEATURE } from "./areas";
 import { type Answered, Grouper } from "./grouping";
 import type { Point } from "./layout";
 import { AskLimits } from "./limits";
@@ -29,6 +35,7 @@ import { Liner } from "./liner";
 import { knownLinks, relatedLinks } from "./links";
 import { askOf, type Failure, modelLine } from "./llm";
 import { appLinkOf, linkOf, menuFor, openerOf, openRequest, opensApps } from "./opening";
+import { Placements } from "./placements";
 import { sessionItems } from "./sessions";
 import { Sources } from "./sources";
 import { type Picked, pick, relatedOf } from "./topics";
@@ -58,6 +65,21 @@ export type MapAnswer =
   | { state: "waiting" };
 
 type SavedMap = { view: MapView; at: number };
+
+const SUB_CHARS = 40;
+
+/** What `api/move` is sent: an item and where the reader puts it, or `reset` to give it back to the model. */
+export type MoveRequest = { id: string; area: string; sub: string } | { id: string; reset: true };
+
+export function moveRequest(body: unknown): MoveRequest {
+  const given = (typeof body === "object" && body !== null ? body : {}) as Record<string, unknown>;
+  const { id, area, sub, reset } = given;
+  if (typeof id !== "string" || id === "") throw new Error("Say which item to move.");
+  if (reset === true) return { id, reset: true };
+  if (typeof area !== "string" || area === "") throw new Error("Say which theme to move it to.");
+  if (sub !== undefined && typeof sub !== "string") throw new Error("A sub-topic is a text.");
+  return { id, area, sub: (sub ?? "").replace(/\s+/g, " ").trim().slice(0, SUB_CHARS) };
+}
 
 /** `picked` with only `items`, and the pairs and entities of those. */
 function narrow(picked: Picked, items: Item[]): Picked {
@@ -90,20 +112,43 @@ export class MindMap {
   };
   private pending: Promise<void> = Promise.resolve();
   private readonly api: ExtensionApi;
+  /** The reader's areas; none: the model's own themes, as before there were areas. */
+  private areas: Area[];
+  readonly placements: Placements;
 
   constructor(api: ExtensionApi, deps: MindMapDeps = {}) {
     this.api = api;
     this.sources = deps.sources ?? new Sources(readToolOf(api));
+    this.areas = areasOf(api);
+    this.placements = new Placements(api.state);
     const limits = new AskLimits();
     const log = (event: string, fields: Record<string, string | number | boolean | null>) =>
       api.log(event, fields);
-    this.grouper = new Grouper({ ask: () => askOf(api), state: api.state, limits, log });
+    this.grouper = new Grouper({
+      ask: () => askOf(api),
+      state: api.state,
+      limits,
+      log,
+      areas: () => this.areas,
+      examples: () => this.placements.examples(this.areas),
+    });
     this.liner = new Liner({ ask: () => askOf(api), state: api.state, limits, log });
+    if ((api.features ?? []).includes(SETTINGS_FEATURE))
+      api.onSettings?.((values) => this.settingsChanged(areasIn(values)));
+  }
+
+  /** The reader edited the settings: with other areas, the map is placed again at once. */
+  private settingsChanged(areas: Area[]): void {
+    if (JSON.stringify(areas) === JSON.stringify(this.areas)) return;
+    this.areas = areas;
+    this.last = null;
+    this.grouper.regroup();
+    if (this.picked !== null) this.pending = this.refresh(Date.now());
   }
 
   async load(): Promise<void> {
     const state = this.api.state;
-    await Promise.all([this.grouper.load(), this.liner.load()]);
+    await Promise.all([this.grouper.load(), this.liner.load(), this.placements.load()]);
     for (const name of OLD_STATE) void state?.delete(name).catch(() => undefined);
     const map = await state?.get<SavedMap>(MAP_STATE).catch(() => undefined);
     if (map !== undefined && Array.isArray(map.view?.nodes) && typeof map.at === "number") {
@@ -226,6 +271,27 @@ export class MindMap {
     }
   }
 
+  /**
+   * `api/move`: puts an item of the map under one of the reader's areas (by
+   * id) and a sub-topic ("" for none), or with `reset` gives it back to the
+   * model. Kept at once; the answer is the map as `api/map` gives it, the
+   * move on it.
+   */
+  async move(body: unknown, now: number): Promise<MapAnswer> {
+    const request = moveRequest(body);
+    const { items } = this.drawn ?? this.known();
+    const item = items.find((one) => one.id === request.id);
+    if (item === undefined) throw new Error("That item is not on the map.");
+    if ("reset" in request) await this.placements.reset(item.id);
+    else {
+      const area = this.areas.find((one) => one.id === request.area);
+      if (area === undefined) throw new Error("That is not one of your areas.");
+      const placement = { area: area.name, sub: request.sub, title: item.title, at: now };
+      await this.placements.set(item.id, placement);
+    }
+    return this.view(now);
+  }
+
   /** The items now and the links prifly knows, before any map has been drawn. */
   private known(): { items: Item[]; links: Link[] } {
     const items = this.picked?.picked.items ?? [];
@@ -247,21 +313,52 @@ export class MindMap {
   }
 
   private sortingOf(picked: Picked, answered: Answered): Sorting {
-    return {
+    const sorting: Sorting = {
       themes: answered.topics,
       themeOf: answered.topicOf,
       lines: this.liner.linesOf(picked.items),
       related: relatedOf(picked, answered.related),
     };
+    return answered.areas === undefined || this.areas.length === 0
+      ? sorting
+      : this.placed(picked.items, answered, sorting);
+  }
+
+  /** The model's placing under the reader's areas, with the reader's own moves over it. */
+  private placed(items: readonly Item[], answered: Answered, sorting: Sorting): Sorting {
+    const themeOf = { ...answered.topicOf };
+    const subOf = { ...answered.subOf };
+    const manual: string[] = [];
+    for (const item of items) {
+      const placement = this.placements.of(item.id, this.areas);
+      if (placement === undefined) continue;
+      themeOf[item.id] = placement.area.id;
+      subOf[item.id] = placement.sub;
+      manual.push(item.id);
+    }
+    const other = items.some((item) => themeOf[item.id] === OTHER.id);
+    const shown = [...this.areas, ...(other ? [OTHER] : [])];
+    return {
+      ...sorting,
+      themes: shown.map((area) => ({ id: area.id, name: area.name, sub: "" })),
+      themeOf,
+      subOf,
+      manual,
+      areaOrder: shown.map((area) => area.id),
+    };
   }
 
   /** Keep a map's places, themes and colours, so the next layout moves from them. */
   private remember(view: MapView, order: string[]): void {
+    const subs = view.subs ?? [];
     this.order = order;
     this.colours = new Map(view.themes.map((theme) => [theme.id, theme.color]));
-    this.themes = new Map(view.nodes.map((node) => [node.id, node.theme]));
+    this.themes = new Map([
+      ...view.nodes.map((node): [string, string] => [node.id, node.hub ?? node.theme]),
+      ...subs.map((sub): [string, string] => [sub.id, sub.theme]),
+    ]);
     this.positions = new Map(
-      [...view.nodes, ...view.themes].map((node) => [node.id, { x: node.x, y: node.y }]),
+      [...view.nodes, ...subs, ...view.themes].map((node) => [node.id, { x: node.x, y: node.y }]),
     );
   }
 

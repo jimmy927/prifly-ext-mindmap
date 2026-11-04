@@ -4,10 +4,27 @@
  * only draws this and animates from the last one.
  */
 
+import { OTHER } from "./areas";
 import { type Box, branchBend, type Circle, placeLabel } from "./curves";
-import { CENTRE, FRAME, layout, orderThemes, type Point, ROOT_R, radiusOf } from "./layout";
+import {
+  CENTRE,
+  FRAME,
+  HUB_R,
+  type LayoutMember,
+  layout,
+  orderThemes,
+  type Point,
+  ROOT_R,
+  radiusOf,
+} from "./layout";
 import { type MenuEntry, menuFor } from "./opening";
+import { normalise } from "./rules";
 import type { Item, Link, LinkKind, Sorting, Status } from "./types";
+
+/** The colour of "Other", the area for what fits none of the reader's. */
+export const OTHER_COLOUR = "#6b7280";
+/** A sub-topic gets a hub of its own from this many members; one alone hangs from its area. */
+export const MIN_HUB = 2;
 
 export const THEME_COLOURS = [
   "#2a78d6",
@@ -56,7 +73,22 @@ export type ViewNode = Point & {
   url?: string;
   /** Every place the circle can be opened, the first being a left-click; empty: nowhere. */
   menu: MenuEntry[];
+  /** With areas: its sub-topic, the hub it hangs from (when the sub-topic has one), and whether the reader placed it. */
+  sub?: string;
+  hub?: string;
+  manual?: boolean;
 };
+/** A sub-topic's hub inside an area's branch. */
+export type ViewSub = Point & {
+  id: string;
+  theme: string;
+  name: string;
+  color: string;
+  r: number;
+  bend: number;
+};
+/** An area as the "Move to theme…" list offers it, with its sub-topics now. */
+export type ViewArea = { id: string; name: string; subs: string[] };
 export type ViewLink = {
   a: string;
   b: string;
@@ -68,8 +100,12 @@ export type MapView = {
   frame: { width: number; height: number };
   root: Point & { r: number; label: string };
   themes: ViewTheme[];
+  /** Sub-topic hubs; absent on a map saved before there were any. */
+  subs?: ViewSub[];
   nodes: ViewNode[];
   links: ViewLink[];
+  /** The reader's areas, for "Move to theme…"; absent without areas. */
+  areas?: ViewArea[];
   legend: { services: { name: string; color: string }[] };
   footer: {
     model: string;
@@ -103,7 +139,12 @@ export function assignColours(
 export function restrictView(view: MapView, ids: ReadonlySet<string>): MapView | null {
   const nodes = view.nodes.filter((node) => ids.has(node.id));
   if (nodes.length === 0) return null;
-  const themes = new Set(nodes.map((node) => node.theme));
+  const hubs = new Set(nodes.map((node) => node.hub));
+  // The reader's areas stay on the map empty; a model's theme (and "Other") goes with its last item.
+  const themes = new Set([
+    ...nodes.map((node) => node.theme),
+    ...(view.areas ?? []).map((area) => area.id),
+  ]);
   const count = (kind: Item["kind"]) => nodes.filter((node) => node.kind === kind).length;
   const services = new Set(
     nodes.flatMap((node) => (node.service === undefined ? [] : [node.service])),
@@ -111,6 +152,7 @@ export function restrictView(view: MapView, ids: ReadonlySet<string>): MapView |
   return {
     ...view,
     themes: view.themes.filter((theme) => themes.has(theme.id)),
+    ...(view.subs === undefined ? {} : { subs: view.subs.filter((sub) => hubs.has(sub.id)) }),
     nodes,
     links: view.links.filter((link) => ids.has(link.a) && ids.has(link.b)),
     legend: { services: view.legend.services.filter((s) => services.has(s.name)) },
@@ -162,7 +204,87 @@ function nodeOf(
     node.ring = SERVICE_COLOURS[item.repo] ?? "#6b7280";
   }
   if (item.url !== undefined) node.url = item.url;
+  const sub = sorting.subOf?.[item.id];
+  if (sub !== undefined && sub !== "") node.sub = sub;
+  if (sorting.manual?.includes(item.id) === true) node.manual = true;
   return node;
+}
+
+type Hub = { id: string; theme: string; name: string; members: string[] };
+
+/** The sub-topics drawn as hubs: those with at least `MIN_HUB` members in one area. */
+export function hubsOf(items: readonly Item[], sorting: Sorting): Hub[] {
+  const hubs = new Map<string, Hub>();
+  for (const item of items) {
+    const theme = sorting.themeOf[item.id];
+    const sub = sorting.subOf?.[item.id] ?? "";
+    if (theme === undefined || normalise(sub) === "") continue;
+    const id = `sub:${theme}:${normalise(sub)}`;
+    const hub = hubs.get(id) ?? { id, theme, name: sub, members: [] };
+    hub.members.push(item.id);
+    hubs.set(id, hub);
+  }
+  return [...hubs.values()].filter((hub) => hub.members.length >= MIN_HUB);
+}
+
+/** What the layout places: the loose members of each theme, then each hub followed by its members. */
+function layoutMembers(items: readonly Item[], sorting: Sorting, hubs: Hub[]): LayoutMember[] {
+  const inHub = new Set(hubs.flatMap((hub) => hub.members));
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const loose = items.flatMap((item) => {
+    const theme = sorting.themeOf[item.id];
+    return theme === undefined || inHub.has(item.id)
+      ? []
+      : [{ id: item.id, theme, r: radiusOf(item.kind) }];
+  });
+  const grouped = hubs.flatMap((hub): LayoutMember[] => [
+    { id: hub.id, theme: hub.theme, r: HUB_R },
+    ...hub.members.map((id) => ({
+      id,
+      theme: hub.theme,
+      r: radiusOf(byId.get(id)?.kind ?? "session"),
+      parent: hub.id,
+    })),
+  ]);
+  return [...loose, ...grouped];
+}
+
+/**
+ * The themes' order round the ellipse and their colours. The reader's areas
+ * keep their own order, and each area the colour of its place in it ("Other"
+ * grey, shown only with an item); a model's themes are ordered by their links
+ * and keep the colours they had.
+ */
+function orderAndColours(
+  input: ViewInput,
+  sizes: ReadonlyMap<string, number>,
+): { order: string[]; colours: Map<string, string> } {
+  const { sorting } = input;
+  const areas = sorting.areaOrder;
+  if (areas === undefined) {
+    const themeIds = sorting.themes.map((theme) => theme.id).filter((id) => sizes.has(id));
+    const order = orderThemes(themeIds, sorting.themeOf, input.links, sizes, input.previousOrder);
+    return { order, colours: assignColours(order, input.colours) };
+  }
+  const order = areas.filter((id) => id !== OTHER.id || sizes.has(id));
+  const colourOf = (id: string, i: number) =>
+    id === OTHER.id ? OTHER_COLOUR : (THEME_COLOURS[i % THEME_COLOURS.length] ?? OTHER_COLOUR);
+  return { order, colours: new Map(areas.map((id, i) => [id, colourOf(id, i)])) };
+}
+
+/** The areas for "Move to theme…", each with the sub-topics its items have now. */
+function areasOf(items: readonly Item[], sorting: Sorting): ViewArea[] | undefined {
+  if (sorting.areaOrder === undefined) return undefined;
+  const names = new Map(sorting.themes.map((theme) => [theme.id, theme.name]));
+  return sorting.areaOrder
+    .filter((id) => id !== OTHER.id)
+    .map((id) => {
+      const subs = items.flatMap((item) => {
+        const sub = sorting.subOf?.[item.id] ?? "";
+        return sorting.themeOf[item.id] === id && sub !== "" ? [sub] : [];
+      });
+      return { id, name: names.get(id) ?? id, subs: [...new Set(subs)].sort() };
+    });
 }
 
 function placeLinks(links: readonly Link[], circles: Map<string, Circle>): ViewLink[] {
@@ -198,16 +320,12 @@ export function buildView(input: ViewInput): {
     const theme = sorting.themeOf[item.id];
     if (theme !== undefined) sizes.set(theme, (sizes.get(theme) ?? 0) + 1);
   }
-  const themeIds = sorting.themes.map((theme) => theme.id).filter((id) => sizes.has(id));
-  const order = orderThemes(themeIds, sorting.themeOf, input.links, sizes, input.previousOrder);
-  const colours = assignColours(order, input.colours);
-  const members = items.flatMap((item) => {
-    const theme = sorting.themeOf[item.id];
-    return theme === undefined ? [] : [{ id: item.id, theme, r: radiusOf(item.kind) }];
-  });
+  const { order, colours } = orderAndColours(input, sizes);
+  const hubs = hubsOf(items, sorting);
+  const hubOf = new Map(hubs.flatMap((hub) => hub.members.map((id) => [id, hub.id])));
   const placed = layout({
     themes: order,
-    members,
+    members: layoutMembers(items, sorting, hubs),
     previous: input.previous,
     previousTheme: input.previousTheme,
   });
@@ -221,31 +339,43 @@ export function buildView(input: ViewInput): {
       bend: branchBend(`theme:${spot.id}`),
     };
   });
+  const hubById = new Map(hubs.map((hub) => [hub.id, hub]));
+  const subs: ViewSub[] = placed.members.flatMap((spot) => {
+    const hub = hubById.get(spot.id);
+    if (hub === undefined) return [];
+    const color = colours.get(hub.theme) ?? "#2a78d6";
+    return [{ ...spot, theme: hub.theme, name: hub.name, color, bend: branchBend(spot.id) }];
+  });
   const byId = new Map(items.map((item) => [item.id, item]));
   const nodes = placed.members.flatMap((spot) => {
     const item = byId.get(spot.id);
     if (item === undefined) return [];
     const colour = colours.get(sorting.themeOf[item.id] ?? "") ?? "#2a78d6";
-    return [nodeOf(item, sorting, colour, spot, spot.r, menuFor(item, items, input.links))];
+    const node = nodeOf(item, sorting, colour, spot, spot.r, menuFor(item, items, input.links));
+    const hub = hubOf.get(item.id);
+    if (hub !== undefined) node.hub = hub;
+    return [node];
   });
   const circles = new Map<string, Circle>([
     ["root", { ...CENTRE, r: ROOT_R }],
-    ...themes.map((t): [string, Circle] => [t.id, t]),
-    ...nodes.map((n): [string, Circle] => [n.id, n]),
+    ...[...themes, ...subs, ...nodes].map((c): [string, Circle] => [c.id, c]),
   ]);
   const services = [
     ...new Set(nodes.flatMap((node) => (node.service === undefined ? [] : [node.service]))),
   ];
+  const areas = areasOf(items, sorting);
   const view: MapView = {
     frame: { ...FRAME },
     root: { ...CENTRE, r: ROOT_R, label: "all sessions" },
     themes,
+    subs,
     nodes,
     links: placeLinks(input.links, circles),
     legend: {
       services: services.map((name) => ({ name, color: SERVICE_COLOURS[name] ?? "#6b7280" })),
     },
     footer: input.footer,
+    ...(areas === undefined ? {} : { areas }),
   };
   return { view, order, colours };
 }
