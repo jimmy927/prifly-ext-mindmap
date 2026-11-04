@@ -9,6 +9,7 @@
 import { drawMap, esc } from "./draw.js";
 import { startEvery } from "./every.js";
 import { choose, closeMenu, menuOf, openMenu } from "./menu.js";
+import { startViewport } from "./viewport.js";
 
 const $ = (id) => document.getElementById(id);
 const EASE_MS = 700;
@@ -246,4 +247,5 @@ addEventListener("message", (event) => {
   if (shown !== null) paint(shown);
 });
 
+startViewport($("map"), $("fit"));
 startEvery(refresh);

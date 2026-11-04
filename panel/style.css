@@ -31,6 +31,7 @@
 html,
 body {
   height: 100%;
+  overflow: hidden; /* the page never scrolls; the wheel zooms the map */
 }
 body {
   margin: 0;
@@ -53,6 +54,33 @@ body {
   width: 100%;
   height: 100%;
   font-family: var(--font);
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+}
+#map.panning {
+  cursor: grabbing;
+}
+.fit {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  z-index: 2;
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 12px / 1.3 var(--font);
+  cursor: pointer;
+}
+.fit:hover,
+.fit:focus-visible {
+  background: color-mix(in srgb, var(--fg) 10%, var(--bg));
+  outline: none;
+}
+.app.failed .fit {
+  display: none;
 }
 .message {
   position: absolute;

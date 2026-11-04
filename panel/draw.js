@@ -209,7 +209,7 @@ export function drawMap(view, dark) {
     }),
   ].join("");
   const links = view.links.map((link) => linkShape(link, circles)).join("");
-  const root = `<g><circle cx="${n(view.root.x)}" cy="${n(view.root.y)}" r="${view.root.r}" fill="${ROOT_FILL}"/>${textBlock(view.root.x, view.root.y, [{ text: view.root.label, cls: "", size: 14, bold: true, fill: "#ffffff" }])}</g>`;
+  const root = `<g class="root"><circle cx="${n(view.root.x)}" cy="${n(view.root.y)}" r="${view.root.r}" fill="${ROOT_FILL}"/>${textBlock(view.root.x, view.root.y, [{ text: view.root.label, cls: "", size: 14, bold: true, fill: "#ffffff" }])}</g>`;
   const labels = view.links
     .map(
       (link) =>

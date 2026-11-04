@@ -281,6 +281,13 @@ circle, so it never overlaps one. Link labels go at the first
 point of their curve no circle and no other label covers, bending the curve
 further, and shortening the label, until one is free.
 
+The reader zooms the map with the mouse wheel (or Ctrl+wheel, or a trackpad
+pinch) around the pointer, from 0.5x to 4x, and drags the background to pan; the
+page never scrolls. A double-click on the background, the 0 key or the "Fit"
+button shows the whole map again; + and - zoom around the centre. The view is
+the SVG's viewBox (`panel/viewport.js`, maths in `panel/zoom.js`), so text stays
+crisp, and the map's refreshes and easing move circles inside it without moving it.
+
 ## Development
 
 ```sh
