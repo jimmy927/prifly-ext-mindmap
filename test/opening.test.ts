@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { MindMap } from "../mindmap";
-import { menuFor, whatsappLink } from "../opening";
+import { appLinkOf, menuFor, whatsappLink } from "../opening";
 import { gmailThreadUrl } from "../sources";
 import type { Item } from "../types";
 import { fakeApi, goodText, item, model, sentIn, session } from "./fake";
@@ -30,14 +30,20 @@ function relating(request: Parameters<typeof goodText>[0]): string {
   return JSON.stringify({ ...base, related: a && b ? [{ a, b, label: "refund" }] : [] });
 }
 
-async function drawn(open?: (url: string) => Promise<boolean>) {
+async function drawn(open?: (url: string) => Promise<boolean>, apps = false) {
   const asked: string[] = [];
   const api = fakeApi({
     sessions: [
       session({ id: SESSION_ID, title: "Refund bug", cwd: "/home/ada/src/shop", state: "working" }),
     ],
     ask: model(relating).ask,
-    features: ["state", "llm-ask", "read-tools", ...(open ? ["open-url"] : [])],
+    features: [
+      "state",
+      "llm-ask",
+      "read-tools",
+      ...(open ? ["open-url"] : []),
+      ...(apps ? ["open-url-apps"] : []),
+    ],
     read: async (name) => {
       if (name === "gmail_search") return GMAIL;
       if (name === "whatsapp_chats") return CHATS;
@@ -144,6 +150,52 @@ describe("api/open", () => {
     await expect(map.open({ id: grace.id, target: "https://example.com/" })).rejects.toThrow();
     await expect(map.open({})).rejects.toThrow();
     expect(asked).toEqual([]);
+  });
+
+  test("with open-url-apps: a person, a group and a card open in their apps", async () => {
+    const { map, node, asked } = await drawn(async () => true, true);
+    for (const title of ["Grace", "Book club", "Fix refunds", "Ada"]) {
+      await map.open({ id: node(title).id, target: node(title).id });
+    }
+    expect(asked).toEqual([
+      "whatsapp://send?phone=46701234567",
+      "whatsapp://",
+      "trello://x-callback-url/showCard?shortlink=abc123",
+      "https://mail.google.com/mail/u/0/#all/t9",
+    ]);
+  });
+
+  test("without open-url-apps the web links open", async () => {
+    const { map, node, asked } = await drawn(async () => true);
+    for (const title of ["Grace", "Book club", "Fix refunds"]) {
+      await map.open({ id: node(title).id, target: node(title).id });
+    }
+    expect(asked).toEqual(["https://wa.me/46701234567", "https://web.whatsapp.com/", CARD_URL]);
+  });
+
+  test("falls back to the web link at once when no app answers", async () => {
+    const { map, node, asked } = await drawn(async (url) => /^https:/.test(url), true);
+    const grace = node("Grace");
+    expect(await map.open({ id: grace.id, target: grace.id })).toEqual({ opened: true });
+    const card = node("Fix refunds");
+    expect(await map.open({ id: card.id, target: card.id })).toEqual({ opened: true });
+    expect(asked).toEqual([
+      "whatsapp://send?phone=46701234567",
+      "https://wa.me/46701234567",
+      "trello://x-callback-url/showCard?shortlink=abc123",
+      CARD_URL,
+    ]);
+  });
+
+  test("the Trello shortlink is taken from the card url", () => {
+    const card = item({
+      id: "k:1",
+      kind: "card",
+      repo: "Trello",
+      url: "https://trello.com/c/Xy12AbCd/34-fix-refunds",
+    });
+    expect(appLinkOf(card)).toBe("trello://x-callback-url/showCard?shortlink=Xy12AbCd");
+    expect(appLinkOf({ ...card, repo: "Gmail" })).toBeUndefined();
   });
 
   test("answers opened: false when prifly has no openUrl or says it did not open", async () => {

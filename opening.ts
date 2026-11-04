@@ -22,24 +22,48 @@ export const MAX_LINKED = 8;
 const TITLE_CHARS = 28;
 
 /**
- * THE one place that turns a WhatsApp chat id into a link, and the one place
- * to change when prifly's `openUrl` lets other schemes through. Today it
- * accepts only http and https, so a person's chat is `https://wa.me/<number>`
- * (the browser hands that to the installed WhatsApp app) and a group, which
- * has no deep link, is WhatsApp Web. With a `whatsapp:` scheme allowed, change
- * the person's link to `whatsapp://send?phone=<number>`; with a `trello:`
- * scheme allowed, Trello cards could be mapped the same way in `linkOf`
- * (Gmail, Outlook and the rest stay web links). Do not use those schemes now:
- * `openUrl` refuses them.
+ * THE one place that turns a WhatsApp chat id into a (web) link. A person's
+ * chat is `https://wa.me/<number>` and a group, which has no deep link, is
+ * WhatsApp Web. Without the prifly feature "open-url-apps", `openUrl` accepts
+ * only http and https, so this is what opens; with it, `appLinkOf` turns the
+ * same link into the app's.
  */
 export function whatsappLink(chatId: string): string {
   const person = chatId.match(/^(\d{5,})(?::\d+)?@(?:s\.whatsapp\.net|c\.us)$/i);
   return person === null ? "https://web.whatsapp.com/" : `https://wa.me/${person[1]}`;
 }
 
-/** What opening `item` in the browser goes to: its link, when it is a web link; see `whatsappLink` for the scheme note. */
+/** What opening `item` in the browser goes to: its link, when it is a web link. */
 export function linkOf(item: Item): string | undefined {
   return item.url !== undefined && /^https?:\/\//i.test(item.url) ? item.url : undefined;
+}
+
+/**
+ * The desktop-app link for `item`, or undefined when it has none (Gmail,
+ * Outlook and the rest stay web links). WhatsApp person: `whatsapp://send?phone=<digits>`;
+ * WhatsApp group: `whatsapp://` (the app itself). Trello card: Atlassian's
+ * `trello://x-callback-url/showCard?shortlink=<shortlink>`, the shortlink
+ * being taken from the card url `https://trello.com/c/<shortlink>/...`.
+ */
+export function appLinkOf(item: Item): string | undefined {
+  const url = linkOf(item);
+  if (url === undefined) return undefined;
+  if (item.repo === "WhatsApp") {
+    const person = url.match(/^https:\/\/wa\.me\/(\d+)$/i);
+    return person === null ? "whatsapp://" : `whatsapp://send?phone=${person[1]}`;
+  }
+  if (item.repo === "Trello") {
+    const card = url.match(/^https:\/\/trello\.com\/c\/([^/?#]+)/i);
+    return card === null
+      ? undefined
+      : `trello://x-callback-url/showCard?shortlink=${encodeURIComponent(card[1] ?? "")}`;
+  }
+  return undefined;
+}
+
+/** True where this prifly's `openUrl` also opens `whatsapp:` and `trello:` links (feature "open-url-apps"). */
+export function opensApps(api: ExtensionApi): boolean {
+  return (api.features ?? []).includes("open-url-apps");
 }
 
 function cut(title: string): string {

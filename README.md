@@ -54,10 +54,19 @@ The links:
   the installed WhatsApp app; a group has no deep link, so it is
   `https://web.whatsapp.com/`.
 
-`openUrl` accepts only http and https. When prifly allows `whatsapp:` and
-`trello:`, the app links (`whatsapp://send?phone=<number>`, `trello://...`) are
-a change to one function, `whatsappLink` in `opening.ts` (and `linkOf` for
-Trello); they are not used now.
+Without prifly's feature "open-url-apps", `openUrl` accepts only http and
+https, and the links above are what opens. With it, "Open in WhatsApp" and "Open
+in Trello" open the desktop apps (`appLinkOf` in `opening.ts`):
+
+- WhatsApp person: `whatsapp://send?phone=<number>`.
+- WhatsApp group: `whatsapp://`, the app itself (a group has no deep link).
+- Trello card: `trello://x-callback-url/showCard?shortlink=<shortlink>`, the
+  form Atlassian documents for its URL scheme; the shortlink is taken from the
+  card url `https://trello.com/c/<shortlink>/...`.
+
+When `openUrl` answers false for the app link (no app registered for the
+scheme), the web link is opened at once instead. Gmail, Outlook and the other
+services stay web links.
 
 The map never sends a message, marks anything read or changes the mailbox.
 

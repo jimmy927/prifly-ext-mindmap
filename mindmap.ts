@@ -28,7 +28,7 @@ import { AskLimits } from "./limits";
 import { Liner } from "./liner";
 import { knownLinks, relatedLinks } from "./links";
 import { askOf, type Failure, modelLine } from "./llm";
-import { linkOf, menuFor, openerOf, openRequest } from "./opening";
+import { appLinkOf, linkOf, menuFor, openerOf, openRequest, opensApps } from "./opening";
 import { sessionItems } from "./sessions";
 import { Sources } from "./sources";
 import { type Picked, pick, relatedOf } from "./topics";
@@ -214,6 +214,9 @@ export class MindMap {
     const open = openerOf(this.api);
     if (open === null) return { opened: false };
     try {
+      const app = opensApps(this.api) && other !== undefined ? appLinkOf(other) : undefined;
+      // The app link first; when no app is registered for it, the web link at once.
+      if (app !== undefined && (await open(app)) === true) return { opened: true };
       return { opened: (await open(url)) === true };
     } catch (error) {
       this.api.log("open_failed", {
