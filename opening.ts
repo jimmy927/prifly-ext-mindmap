@@ -1,0 +1,104 @@
+/**
+ * Where an item can be opened. A session opens inside prifly; a conversation
+ * or a card opens in the reader's own browser through `api.openUrl` (never
+ * `window.open`, which inside prifly's webview is not the reader's browser).
+ * The page never sends a URL: it names an item and one of that item's menu
+ * entries, and the extension looks the link up itself.
+ */
+
+import type { ExtensionApi } from "@prifly/extension-api";
+import type { Item, Link } from "./types";
+
+/** One line of the right-click menu. `target` is the id of the item it opens. */
+export type MenuEntry = {
+  label: string;
+  target: string;
+  /** "prifly": a session, opened in prifly. "browser": a link, opened in the reader's browser. */
+  where: "prifly" | "browser";
+};
+
+/** Linked cards and conversations listed under a session. */
+export const MAX_LINKED = 8;
+const TITLE_CHARS = 28;
+
+/**
+ * THE one place that turns a WhatsApp chat id into a link, and the one place
+ * to change when prifly's `openUrl` lets other schemes through. Today it
+ * accepts only http and https, so a person's chat is `https://wa.me/<number>`
+ * (the browser hands that to the installed WhatsApp app) and a group, which
+ * has no deep link, is WhatsApp Web. With a `whatsapp:` scheme allowed, change
+ * the person's link to `whatsapp://send?phone=<number>`; with a `trello:`
+ * scheme allowed, Trello cards could be mapped the same way in `linkOf`
+ * (Gmail, Outlook and the rest stay web links). Do not use those schemes now:
+ * `openUrl` refuses them.
+ */
+export function whatsappLink(chatId: string): string {
+  const person = chatId.match(/^(\d{5,})(?::\d+)?@(?:s\.whatsapp\.net|c\.us)$/i);
+  return person === null ? "https://web.whatsapp.com/" : `https://wa.me/${person[1]}`;
+}
+
+/** What opening `item` in the browser goes to: its link, when it is a web link; see `whatsappLink` for the scheme note. */
+export function linkOf(item: Item): string | undefined {
+  return item.url !== undefined && /^https?:\/\//i.test(item.url) ? item.url : undefined;
+}
+
+function cut(title: string): string {
+  const text = title.replace(/\s+/g, " ").trim();
+  return text.length > TITLE_CHARS ? `${text.slice(0, TITLE_CHARS - 1).trimEnd()}…` : text;
+}
+
+/** The cards and conversations a session has a link to (ticket, related), cards first, with a link of their own. */
+function linkedTo(session: Item, items: readonly Item[], links: readonly Link[]): Item[] {
+  const byId = new Map(items.map((item) => [item.id, item]));
+  const seen = new Set<string>();
+  const found: Item[] = [];
+  for (const link of links) {
+    const otherId = link.a === session.id ? link.b : link.b === session.id ? link.a : null;
+    const other = otherId === null ? undefined : byId.get(otherId);
+    if (other === undefined || other.kind === "session" || seen.has(other.id)) continue;
+    if (linkOf(other) === undefined) continue;
+    seen.add(other.id);
+    found.push(other);
+  }
+  const rank = (item: Item) => (item.kind === "card" ? 0 : 1);
+  return found.sort((a, b) => rank(a) - rank(b)).slice(0, MAX_LINKED);
+}
+
+/**
+ * Every place `item` can be opened, the first being what a left-click does.
+ * A session: prifly, then its linked cards and conversations. A conversation
+ * or card: its service, when it has a link. Empty: nowhere to open.
+ */
+export function menuFor(item: Item, items: readonly Item[], links: readonly Link[]): MenuEntry[] {
+  if (item.kind !== "session") {
+    return linkOf(item) === undefined
+      ? []
+      : [{ label: `Open in ${item.repo}`, target: item.id, where: "browser" }];
+  }
+  return [
+    { label: "Open in prifly", target: item.id, where: "prifly" },
+    ...linkedTo(item, items, links).map(
+      (other): MenuEntry => ({
+        label: `Open ${cut(other.title)} in ${other.repo}`,
+        target: other.id,
+        where: "browser",
+      }),
+    ),
+  ];
+}
+
+/** `api.openUrl` where this prifly has it (feature "open-url"), else null. */
+export function openerOf(api: ExtensionApi): ((url: string) => Promise<boolean>) | null {
+  if (!(api.features ?? []).includes("open-url")) return null;
+  const open = api.openUrl;
+  return typeof open === "function" ? (url) => open.call(api, url) : null;
+}
+
+/** The item id and target a page names to `api/open`; a throw when the body is not that. */
+export function openRequest(body: unknown): { id: string; target: string } {
+  const record = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
+  const { id, target } = record;
+  if (typeof id !== "string" || typeof target !== "string" || id === "" || target === "")
+    throw new Error("Say which item and where to open it.");
+  return { id, target };
+}

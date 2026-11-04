@@ -6,6 +6,7 @@
 
 import { type Box, branchBend, type Circle, placeLabel } from "./curves";
 import { CENTRE, FRAME, layout, orderThemes, type Point, ROOT_R, radiusOf } from "./layout";
+import { type MenuEntry, menuFor } from "./opening";
 import type { Item, Link, LinkKind, Sorting, Status } from "./types";
 
 export const THEME_COLOURS = [
@@ -53,6 +54,8 @@ export type ViewNode = Point & {
   service?: string;
   ring?: string;
   url?: string;
+  /** Every place the circle can be opened, the first being a left-click; empty: nowhere. */
+  menu: MenuEntry[];
 };
 export type ViewLink = {
   a: string;
@@ -132,7 +135,14 @@ export type ViewInput = {
   footer: MapView["footer"];
 };
 
-function nodeOf(item: Item, sorting: Sorting, colour: string, at: Point, r: number): ViewNode {
+function nodeOf(
+  item: Item,
+  sorting: Sorting,
+  colour: string,
+  at: Point,
+  r: number,
+  menu: MenuEntry[],
+): ViewNode {
   const node: ViewNode = {
     id: item.id,
     kind: item.kind,
@@ -144,6 +154,7 @@ function nodeOf(item: Item, sorting: Sorting, colour: string, at: Point, r: numb
     x: at.x,
     y: at.y,
     bend: branchBend(item.id),
+    menu,
   };
   if (item.kind === "session") node.status = item.status;
   else {
@@ -215,7 +226,7 @@ export function buildView(input: ViewInput): {
     const item = byId.get(spot.id);
     if (item === undefined) return [];
     const colour = colours.get(sorting.themeOf[item.id] ?? "") ?? "#2a78d6";
-    return [nodeOf(item, sorting, colour, spot, spot.r)];
+    return [nodeOf(item, sorting, colour, spot, spot.r, menuFor(item, items, input.links))];
   });
   const circles = new Map<string, Circle>([
     ["root", { ...CENTRE, r: ROOT_R }],

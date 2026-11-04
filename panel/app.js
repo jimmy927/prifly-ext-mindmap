@@ -1,10 +1,13 @@
 // The Mind map window: asks `api/map` while visible, draws it, and eases every
 // circle and label from where it was to where the extension now puts it. A
-// click on a session opens it in prifly; on a card or a conversation with a
-// link, opens that link. The map itself never sends or changes anything.
+// click on a circle opens it where its first menu line says (a session in
+// prifly, anything else in the reader's browser); a right-click lists every
+// place it can be opened (menu.js). The map itself never sends or changes
+// anything.
 
 import { drawMap, esc } from "./draw.js";
 import { startEvery } from "./every.js";
+import { choose, closeMenu, menuOf, openMenu } from "./menu.js";
 
 const $ = (id) => document.getElementById(id);
 const EASE_MS = 700;
@@ -198,16 +201,24 @@ async function refresh() {
   }
 }
 
-$("map").addEventListener("click", (event) => {
+function nodeAt(event) {
   const g = event.target.closest?.(".node");
-  if (!g || target === null) return;
-  const node = target.nodes.find((m) => m.id === g.dataset.id);
-  if (!node) return;
-  if (node.kind === "session") {
-    parent.postMessage({ type: "prifly-open-session", session: node.id }, "*");
-  } else if (node.url) {
-    window.open(node.url, "_blank", "noreferrer");
-  }
+  if (!g || target === null) return null;
+  return target.nodes.find((m) => m.id === g.dataset.id) ?? null;
+}
+
+// A left-click does the first line of the circle's menu; a right-click shows them all.
+$("map").addEventListener("click", (event) => {
+  const node = nodeAt(event);
+  const first = node && menuOf(node)[0];
+  if (first) void choose(node, first);
+});
+
+$("map").addEventListener("contextmenu", (event) => {
+  event.preventDefault();
+  const node = nodeAt(event);
+  if (node) openMenu(node, event.clientX, event.clientY);
+  else closeMenu();
 });
 
 const LOOK = {

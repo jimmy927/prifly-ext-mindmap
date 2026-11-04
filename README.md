@@ -21,12 +21,45 @@ and it opens over nearly the whole window.
   topics ("Topics by claude-haiku via Claude") and which sources could not be
   read.
 
-Clicking a session opens it in prifly. Clicking a card opens it in Trello, and a
-conversation opens its link when its tool gave one - a Gmail circle opens its
-thread in your browser (`https://mail.google.com/mail/u/0/#all/<thread_id>`, or
-`https://mail.google.com/mail/?authuser=<email>#all/<thread_id>` when the read
-was for a named account). The map never sends a message, marks anything read or
-changes the mailbox.
+## Opening a circle
+
+A left-click does the first line of the circle's menu; a right-click shows the
+whole menu, with the service named on every line. The menu closes on Escape, a
+click outside or a choice, and stays inside the window.
+
+- **A session** opens in prifly ("Open in prifly"). Below that the menu lists
+  what it is linked to, each as "Open <title> in <service>": its Trello card (the
+  card's `sessionId`) and the conversations it has a related or ticket link to.
+- **A card or a conversation** opens in the reader's own browser: "Open in
+  Trello", "Open in Gmail", "Open in WhatsApp", "Open in Outlook", "Open in
+  Instagram", "Open in LinkedIn", "Open in Messenger", when the item has a link.
+  An item with nowhere to open shows one greyed line, "Nothing to open".
+
+Links go to the operating system's browser through `api.openUrl` (prifly's
+feature "open-url"), never `window.open`, which inside prifly's window is not
+your browser. The page asks `api/open` with an item id and the id of the item
+to open; the extension looks that item's link up itself and refuses an unknown
+item or a target the item's menu does not list, so the page cannot open an
+arbitrary URL. On a prifly without "open-url", or when it answers false, the
+panel says "prifly could not open the browser".
+
+The links:
+
+- Gmail: `https://mail.google.com/mail/u/0/#all/<thread_id>`, or
+  `https://mail.google.com/mail/?authuser=<email>#all/<thread_id>` when the read
+  was for a named account.
+- Trello and the other services: the link their tool gave.
+- WhatsApp: for a person, `https://wa.me/<number>` (the digits of the chat id,
+  `46701234567@s.whatsapp.net` gives `46701234567`), which the browser hands to
+  the installed WhatsApp app; a group has no deep link, so it is
+  `https://web.whatsapp.com/`.
+
+`openUrl` accepts only http and https. When prifly allows `whatsapp:` and
+`trello:`, the app links (`whatsapp://send?phone=<number>`, `trello://...`) are
+a change to one function, `whatsappLink` in `opening.ts` (and `linkOf` for
+Trello); they are not used now.
+
+The map never sends a message, marks anything read or changes the mailbox.
 
 ## How it stays current
 

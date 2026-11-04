@@ -143,7 +143,7 @@ function nodeShape(node, base) {
       size: small ? 8.5 : 9,
     })),
   ];
-  const click = node.kind === "session" || node.url ? " click" : "";
+  const click = node.menu?.length || node.kind === "session" ? " click" : "";
   const ring = small
     ? `<circle cx="${n(node.x)}" cy="${n(node.y)}" r="${node.r + 3.5}" fill="none" stroke="${node.ring}" stroke-width="2.5"/>`
     : "";

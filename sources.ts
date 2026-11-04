@@ -4,6 +4,7 @@
  * nothing marked read. A missing or failing source is skipped and named.
  */
 
+import { whatsappLink } from "./opening";
 import { type Entry, parseListing, personOf } from "./parse";
 import type { Item, ReadTool } from "./types";
 
@@ -87,6 +88,7 @@ export const SOURCES: readonly Source[] = [
     kind: "conversation",
     everyMs: 5 * MINUTE,
     args: () => ({ limit: 30 }),
+    link: whatsappLink,
     keep: keepChat,
     needsMe: true,
   },

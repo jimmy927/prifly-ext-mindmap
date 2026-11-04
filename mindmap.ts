@@ -28,10 +28,11 @@ import { AskLimits } from "./limits";
 import { Liner } from "./liner";
 import { knownLinks, relatedLinks } from "./links";
 import { askOf, type Failure, modelLine } from "./llm";
+import { linkOf, menuFor, openerOf, openRequest } from "./opening";
 import { sessionItems } from "./sessions";
 import { Sources } from "./sources";
 import { type Picked, pick, relatedOf } from "./topics";
-import { type FactSession, type Item, readToolOf, type Sorting } from "./types";
+import { type FactSession, type Item, type Link, readToolOf, type Sorting } from "./types";
 import { buildView, type MapView, restrictView } from "./view";
 
 export const SESSIONS_EVERY_MS = 15_000;
@@ -80,6 +81,8 @@ export class MindMap {
   private order: string[] = [];
   private colours = new Map<string, string>();
   private last: { key: string; view: MapView } | null = null;
+  /** The items and links of the map last drawn: what `open` looks links up in. */
+  private drawn: { items: Item[]; links: Link[] } | null = null;
   private good: SavedMap | null = null;
   private saved: { key: string | undefined; at: number } = {
     key: undefined,
@@ -192,6 +195,40 @@ export class MindMap {
       });
   }
 
+  /**
+   * `api/open`: opens the link of one of an item's menu entries in the
+   * reader's browser. The page names the item and the target item; the link
+   * is the target's own, and a target the item's menu does not list is refused.
+   * `opened` is false when this prifly cannot open a browser or says it did not.
+   */
+  async open(body: unknown): Promise<{ opened: boolean }> {
+    const { id, target } = openRequest(body);
+    const { items, links } = this.drawn ?? this.known();
+    const item = items.find((one) => one.id === id);
+    if (item === undefined) throw new Error("That item is not on the map.");
+    const entry = menuFor(item, items, links).find((e) => e.target === target);
+    const other = items.find((one) => one.id === target);
+    const url = other === undefined ? undefined : linkOf(other);
+    if (entry === undefined || entry.where !== "browser" || url === undefined)
+      throw new Error("That item cannot be opened there.");
+    const open = openerOf(this.api);
+    if (open === null) return { opened: false };
+    try {
+      return { opened: (await open(url)) === true };
+    } catch (error) {
+      this.api.log("open_failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return { opened: false };
+    }
+  }
+
+  /** The items now and the links prifly knows, before any map has been drawn. */
+  private known(): { items: Item[]; links: Link[] } {
+    const items = this.picked?.picked.items ?? [];
+    return { items, links: knownLinks(items) };
+  }
+
   /** Wait for the reads and the call the last `view` started (for tests). */
   settle(): Promise<void> {
     return this.pending;
@@ -230,6 +267,7 @@ export class MindMap {
     const sorting = this.sortingOf(picked, answered);
     const known = knownLinks(items);
     const links = [...known, ...relatedLinks(items, sorting, known)];
+    this.drawn = { items, links };
     const footer = {
       model: answered.model === "" ? "" : modelLine(answered.model, answered.backend),
       skipped: this.sources.skipped(),

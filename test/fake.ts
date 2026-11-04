@@ -33,6 +33,8 @@ export type FakeOptions = {
   /** The model call prifly lends; null or absent for a prifly without "llm-ask". Read at each use. */
   ask?: Ask | null;
   read?: (name: string, args: Record<string, unknown>) => Promise<string>;
+  /** The browser prifly opens links in (feature "open-url"); absent for a prifly without it. */
+  open?: (url: string) => Promise<boolean>;
 };
 
 /** What the grouping prompt carries, as the tests read it. */
@@ -120,8 +122,15 @@ export function fakeApi(
     logs,
     reads,
     get features() {
-      return options.features ?? ["state", ...(options.ask ? ["llm-ask"] : [])];
+      return (
+        options.features ?? [
+          "state",
+          ...(options.ask ? ["llm-ask"] : []),
+          ...(options.open ? ["open-url"] : []),
+        ]
+      );
     },
+    openUrl: options.open,
     llm: { ask: (request: LlmRequest) => (options.ask ?? refusing("no-model", "none"))(request) },
     tools,
     state: fakeState(),
